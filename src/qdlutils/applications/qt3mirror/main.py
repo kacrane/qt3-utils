@@ -283,6 +283,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         sys.exit(1)
 
     root = tk.Tk()
+    # Position the window so it doesn't overlap other launched apps
+    root.geometry("+20+475")
     btn_font = ("Segoe UI", 9) if sys.platform == "win32" else ("TkDefaultFont", 9)
     root.option_add("*TButton*Font", btn_font)
     root.option_add("*TLabel*Font", btn_font)

@@ -652,8 +652,10 @@ class LineScanApplication:
         # Launch the line scan GUI
         # Then initialize the GUI
         self.root = tk.Toplevel()
+        # Position the window so it doesn't overlap other launched apps
+        self.root.geometry("+440+40")
         self.root.title(f'Scan {id} ({self.timestamp.strftime("%Y-%m-%d %H:%M:%S")})')
-        self.view = LineScanApplicationView(window=self.root, 
+        self.view = LineScanApplicationView(window=self.root,
                                             application=self,
                                             settings_dict=parent_application.scan_parameters)
 
@@ -1024,8 +1026,10 @@ class ImageScanApplication():
         # Launch the line scan GUI
         # Then initialize the GUI
         self.root = tk.Toplevel()
+        # Position the window so it doesn't overlap other launched apps
+        self.root.geometry("+440+40")
         self.root.title(f'Scan {id} ({self.timestamp.strftime("%Y-%m-%d %H:%M:%S")})')
-        self.view = ImageScanApplicationView(window=self.root, 
+        self.view = ImageScanApplicationView(window=self.root,
                                             application=self,
                                             settings_dict=parent_application.scan_parameters)
         

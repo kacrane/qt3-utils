@@ -411,6 +411,8 @@ class PowerMonitorApp:
 
 def main() -> None:
     root = tk.Tk()
+    # Position the window so it doesn't overlap other launched apps
+    root.geometry("+375+775")
     app = PowerMonitorApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()

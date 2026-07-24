@@ -43,6 +43,8 @@ class HomeApplication:
     def __init__(self):
         # Initialize the root tkinter widget (window housing GUI)
         self.root = tk.Tk()
+        # Position the window so it doesn't overlap other launched apps
+        self.root.geometry("+30+40")
         # Create the main application GUI
         self.view = HomeApplicationView(main_window=self.root)
 
