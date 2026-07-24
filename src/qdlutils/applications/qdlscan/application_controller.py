@@ -122,17 +122,10 @@ class ScanController:
         # Block the controller from additional external commands
         self.busy=True
 
-        # MIRROR STATE PRESERVATION: Save current digital output states BEFORE counter starts
-        mirror_states = self._save_mirror_states()
-
-        # Start the counter (this resets the DAQ and digital outputs)
+        # Start the counter (mirror digital output states are saved/restored
+        # internally by the counter controller's own start() method)
         logger.info('Starting counter task on DAQ.')
         self.counter_controller.start()
-
-        # MIRROR STATE PRESERVATION: Restore mirror states AFTER counter initialization
-        if mirror_states is not None:
-            self._restore_mirror_states(mirror_states)
-            time.sleep(0.1)  # Give DAQ time to settle
 
         # Get the axis controller depending on which axis is requested
         if axis == 'x':
@@ -201,45 +194,6 @@ class ScanController:
 
         # Return the buffered output
         return output
-
-    def _save_mirror_states(self):
-        '''
-        Save the current state of the mirror digital output lines before DAQ reinit.
-        Returns a list of boolean states (True=high/up, False=low/down) or None if read fails.
-        '''
-        try:
-            import nidaqmx
-            # Create a temporary read task for the mirror lines
-            task = nidaqmx.Task()
-            task.di_channels.add_di_chan("Dev1/port1/line2:5")
-            states = task.read(number_of_samples_per_channel=1)
-            task.close()
-            # Flatten and return
-            if states:
-                logger.info(f'Saved mirror states: {states[0]}')
-                return list(states[0])
-            return None
-        except Exception as e:
-            logger.warning(f'Could not save mirror states: {e}')
-            return None
-
-    def _restore_mirror_states(self, states):
-        '''
-        Restore mirror digital output states after DAQ reinit.
-        '''
-        try:
-            import nidaqmx
-            if not states or len(states) != 4:
-                logger.warning('Invalid mirror states to restore')
-                return
-            # Create a temporary write task for the mirror lines
-            task = nidaqmx.Task()
-            task.do_channels.add_do_chan("Dev1/port1/line2:5")
-            task.write(states, auto_start=True)
-            task.close()
-            logger.info(f'Restored mirror states: {states}')
-        except Exception as e:
-            logger.warning(f'Could not restore mirror states: {e}')
 
     def scan_image(self,
                    axis_1: str,

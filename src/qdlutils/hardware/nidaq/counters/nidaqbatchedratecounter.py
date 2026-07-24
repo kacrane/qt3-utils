@@ -214,11 +214,23 @@ class NidaqBatchedRateCounter:
         # If currently running, stop the clock task
         if self.running:
             self.stop()
+
+        # MIRROR PRESERVATION: Save digital output states before DAQ reconfiguration
+        mirror_states = self._save_do_states()
+
         # Configure the DAQ for current measurement
         self._configure_daq()
+
         # If using an internal clock and a clock task was started start the clock task.
         if self.edge_counter_interface.clock_task:
             self.edge_counter_interface.clock_task.start()
+
+        # MIRROR PRESERVATION: Restore digital output states after the clock task
+        # is actually running (starting it, not just creating/configuring it, is
+        # what disturbs the DIO lines).
+        if mirror_states is not None:
+            self._restore_do_states(mirror_states)
+
         self.running = True
 
     def stop(self) -> None:
@@ -250,29 +262,47 @@ class NidaqBatchedRateCounter:
         self.running = False
 
     def _save_do_states(self):
-        '''Save current digital output states on port0/line0:3 before DAQ reinit.'''
+        '''
+        Read the mirrors' last-known state from the qt3mirror status file.
+        The mirror DO lines are output-only and cannot be read back from the DAQ,
+        so this status file (kept up to date by the qt3mirror app on every change)
+        is the only available source of truth for what the mirrors are set to.
+        '''
         try:
-            import nidaqmx
-            task = nidaqmx.Task()
-            task.di_channels.add_di_chan(f"{self.daq_name}/port1/line2:5")
-            states = task.read(number_of_samples_per_channel=1)
-            task.close()
-            if states:
-                result = list(states[0])
-                logger.info(f'Saved DO mirror states: {result}')
-                return result
+            import importlib.resources
+            import yaml
+            status_path = importlib.resources.files(
+                "qdlutils.applications.qt3mirror.config_files"
+            ).joinpath("qt3mirror_status.yaml")
+            with status_path.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            levels = data.get("levels") if data else None
+            if levels and len(levels) == 4:
+                logger.info(f'Loaded mirror states from status file: {levels}')
+                return list(levels)
         except Exception as e:
-            logger.warning(f'Could not save DO states: {e}')
+            logger.debug(f'Could not load mirror status file: {e}')
         return None
 
     def _restore_do_states(self, states):
-        '''Restore digital output states on port0/line0:3 after DAQ reinit.'''
+        '''
+        Write digital output states to the mirror lines after DAQ reinit.
+
+        The flippers are edge-triggered (not level-triggered), so if the DAQ
+        reset already left a line sitting at the target level, writing that
+        same level again produces no transition and the flipper never moves.
+        Pulse through the opposite level briefly first to guarantee a real
+        edge into the correct final state, regardless of what the reset left
+        behind (same technique qt3mirror's own sync_all_up() uses).
+        '''
         try:
-            import nidaqmx
             if not states or len(states) != 4:
                 return
+            inverted = [not s for s in states]
             task = nidaqmx.Task()
             task.do_channels.add_do_chan(f"{self.daq_name}/port1/line2:5")
+            task.write(inverted, auto_start=True)
+            time.sleep(0.015)
             task.write(states, auto_start=True)
             task.close()
             logger.info(f'Restored DO mirror states: {states}')
