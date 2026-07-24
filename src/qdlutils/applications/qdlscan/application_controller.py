@@ -181,6 +181,10 @@ class ScanController:
 
         # Then iterate through the positions
         for index, position in enumerate(positions):
+            # Stop early if requested (e.g. scan window was closed)
+            if self.stop_scan:
+                logger.info('Stopping scan early due to stop request.')
+                break
             # Move to the desired position
             self._set_axis(axis_controller=axis_controller, position=position)
             # Get the counts
@@ -260,10 +264,18 @@ class ScanController:
             single_scan =  self._scan_axis(axis_controller=axis_controller_1,
                                            start=start_1,
                                            stop=stop_1,
-                                           n_pixels=n_pixels_1, 
+                                           n_pixels=n_pixels_1,
                                            scan_time=scan_time)
             # Update the buffer
             #output[index] = single_scan
+
+            # If a stop was requested mid-row, don't yield the partial row: leave it
+            # unstored so that resuming (`continue_scan`) redoes this row in full
+            # instead of skipping past it.
+            if self.stop_scan:
+                logger.info('Stopping scan.')
+                self.stop()
+                return
 
             # Set back to original position on fast scan axis
             #self._set_axis(axis_controller=axis_controller_1, position=start_1)
@@ -271,18 +283,12 @@ class ScanController:
             self._scan_axis(axis_controller=axis_controller_1,
                             start=stop_1,
                             stop=start_1,
-                            n_pixels=n_pixels_1, 
+                            n_pixels=n_pixels_1,
                             scan_time=self.inter_scan_settle_time)
 
             # Yield a single scan
             yield single_scan
 
-            # If the stop is requested then terminate and return the final scan
-            if self.stop_scan:
-                logger.info('Stopping scan.')
-                self.stop()
-                return single_scan
-            
         logger.info('Scan complete.')
         self.stop()
 
