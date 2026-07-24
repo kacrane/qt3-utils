@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import argparse
-import importlib.resources
 import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, Dict, List, Optional
-
-import yaml
 
 from qdlutils.applications.qt3mirror.config import (
     N_FLIPPERS,
@@ -153,25 +150,6 @@ class FlipperMirrorApp:
             else:
                 sv.set("—")
 
-    def _persist_mirror_status(self) -> None:
-        '''
-        Write the controller's current commanded levels to a status file so that
-        other processes (e.g. qdlscan) can learn the mirrors' current state.
-        The DO lines themselves are output-only and cannot be read back, so this
-        file is the only source of truth outside of this app's own memory.
-        Best-effort: failures here should never block the GUI.
-        '''
-        if self._controller is None or not self._controller.connected:
-            return
-        try:
-            status_path = importlib.resources.files(
-                "qdlutils.applications.qt3mirror.config_files"
-            ).joinpath("qt3mirror_status.yaml")
-            with status_path.open("w", encoding="utf-8") as f:
-                yaml.safe_dump({"levels": self._controller.levels}, f)
-        except Exception as e:
-            print(f"qt3mirror: could not write status file: {e}", file=sys.stderr)
-
     def _refresh_status(self) -> None:
         if self._controller and self._controller.connected:
             self._status_var.set(f"Connected: {self._controller.channel_string}")
@@ -209,7 +187,6 @@ class FlipperMirrorApp:
                 self._refresh_flipper_labels()
                 self._refresh_status()
                 self._update_widget_states()
-                self._persist_mirror_status()
 
             self.root.after(0, apply)
 
@@ -251,7 +228,6 @@ class FlipperMirrorApp:
                 if err is not None:
                     messagebox.showerror("Flipper DAQ", str(err))
                 self._update_widget_states()
-                self._persist_mirror_status()
 
             self.root.after(0, finish)
 

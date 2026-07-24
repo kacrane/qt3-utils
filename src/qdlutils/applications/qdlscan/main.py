@@ -259,52 +259,7 @@ class LauncherApplication:
             Filename of the .yaml file in the qdlscan/config_files path.
         '''
         yaml_path = importlib.resources.files(CONFIG_PATH).joinpath(yaml_filename)
-
-        # MIRROR PRESERVATION: Save states before DAQ reconfiguration
-        mirror_states = self._save_mirror_states()
-
         self.configure_from_yaml(str(yaml_path))
-
-        # MIRROR PRESERVATION: Restore states after DAQ is reconfigured
-        if mirror_states is not None:
-            self._restore_mirror_states(mirror_states)
-
-    def _save_mirror_states(self):
-        '''
-        Read the mirrors' last-known state from the qt3mirror status file.
-        The mirror DO lines are output-only and cannot be read back from the DAQ,
-        so this status file (kept up to date by the qt3mirror app on every change)
-        is the only available source of truth for what the mirrors are set to.
-        '''
-        try:
-            import importlib.resources
-            import yaml
-            status_path = importlib.resources.files(
-                "qdlutils.applications.qt3mirror.config_files"
-            ).joinpath("qt3mirror_status.yaml")
-            with status_path.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            levels = data.get("levels") if data else None
-            if levels and len(levels) == 4:
-                logger.info(f'Loaded mirror states from status file: {levels}')
-                return list(levels)
-        except Exception as e:
-            logger.debug(f'Could not load mirror status file: {e}')
-        return None
-
-    def _restore_mirror_states(self, states):
-        '''Write digital output states to the mirror lines after DAQ reinitialization.'''
-        try:
-            import nidaqmx
-            if not states or len(states) != 4:
-                return
-            task = nidaqmx.Task()
-            task.do_channels.add_do_chan("Dev1/port1/line2:5")
-            task.write(states, auto_start=True)
-            task.close()
-            logger.info(f'Restored mirror states: {states}')
-        except Exception as e:
-            logger.debug(f'Could not restore mirror states: {e}')
 
     def enable_buttons(self) -> None:
         pass

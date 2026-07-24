@@ -122,8 +122,7 @@ class ScanController:
         # Block the controller from additional external commands
         self.busy=True
 
-        # Start the counter (mirror digital output states are saved/restored
-        # internally by the counter controller's own start() method)
+        # Start the counter
         logger.info('Starting counter task on DAQ.')
         self.counter_controller.start()
 
