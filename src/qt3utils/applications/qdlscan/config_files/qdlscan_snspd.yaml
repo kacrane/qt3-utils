@@ -1,0 +1,67 @@
+# qdlscan with Single Quantum WebSQ (SNSPD over lab LAN)
+QDLSCAN:
+  ApplicationController:
+    import_path : qt3utils.applications.qdlscan.application_controller
+    class_name : ScanController
+    hardware :
+      counter : Snspd
+      x_axis_control : PiezoX
+      y_axis_control : PiezoY
+      z_axis_control : PiezoZ
+    configure :
+      inter_scan_settle_time : 0.01
+
+  Snspd:
+    import_path : qt3utils.hardware.singlequantum.websq_timed_counter
+    class_name  : WebSqTimedCounter
+    configure :
+      host : "3.3.44.57"
+      counts_port : 12345
+      control_port : 12000
+      detector_index : 0
+      auto_sync_period : true
+      auto_enable_detectors : false
+      connect_timeout : 10.0
+      read_timeout : 30.0
+
+  PiezoX:
+    import_path : qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+    class_name  : NidaqPositionController
+    configure:
+      device_name: Dev1
+      write_channel: ao0
+      read_channel:
+      move_settle_time: 0.0
+      scale_microns_per_volt: 8
+      zero_microns_volt_offset: 5
+      min_position: -40.0
+      max_position: 40.0
+      invert_axis: True
+
+  PiezoY:
+    import_path : qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+    class_name  : NidaqPositionController
+    configure:
+      device_name: Dev1
+      write_channel: ao1
+      read_channel: 
+      move_settle_time: 0.0
+      scale_microns_per_volt: 8
+      zero_microns_volt_offset: 5
+      min_position: -40.0
+      max_position: 40.0
+      invert_axis: True
+
+  PiezoZ:
+    import_path : qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+    class_name  : NidaqPositionController
+    configure:
+      device_name: Dev1
+      write_channel: ao2
+      read_channel: 
+      move_settle_time: 0.0
+      scale_microns_per_volt: 8
+      zero_microns_volt_offset: 5
+      min_position: -40.0
+      max_position: 40.0
+      invert_axis: False

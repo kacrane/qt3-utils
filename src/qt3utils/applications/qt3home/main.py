@@ -53,6 +53,7 @@ def main() -> None:
         ("Qt3 Power", "qt3utils.applications.qt3power.main", None),
         ("Qt3 Santec", "qt3utils.applications.qt3santec.main", None),
         ("Qt3 Scan", "qt3utils.applications.qt3scan.main", None),
+        ("QDL Scan", "qt3utils.applications.qdlscan.main", None),
         ("Qt3 Scope", "qt3utils.applications.qt3scope.main", None),
         ("Qt3 Mirror", "qt3utils.applications.qt3mirror.main", None),
     ]
