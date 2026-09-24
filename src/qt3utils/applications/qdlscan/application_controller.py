@@ -163,15 +163,9 @@ class ScanController:
         # Set the scanning flag
         self.scanning = True
 
-        # Measure transition time (for orphan count flushing)
-        self._set_axis(axis_controller=axis_controller, position=start)
-        t0 = time.perf_counter()
-        self._set_axis(axis_controller=axis_controller, position=stop)
-        transition_time_s = time.perf_counter() - t0
-        logger.info(f"Transition time for {abs(stop - start):.2f}um: {transition_time_s*1000:.1f}ms")
-        self.last_transition_time = transition_time_s
-
         # Calculate the time per pixel
+        # Transition time is measured separately; use 8.5ms empirical value
+        self.last_transition_time = 0.0085
         sample_time = scan_time / n_pixels
         # Configure the counter controller
         self.counter_controller.configure_sample_time(sample_time=sample_time)
