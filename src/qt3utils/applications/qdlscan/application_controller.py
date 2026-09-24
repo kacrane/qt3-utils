@@ -169,6 +169,7 @@ class ScanController:
         self._set_axis(axis_controller=axis_controller, position=stop)
         transition_time_s = time.perf_counter() - t0
         logger.info(f"Transition time for {abs(stop - start):.2f}um: {transition_time_s*1000:.1f}ms")
+        self.last_transition_time = transition_time_s
 
         # Calculate the time per pixel
         sample_time = scan_time / n_pixels
@@ -273,6 +274,12 @@ class ScanController:
                                            stop=stop_1,
                                            n_pixels=n_pixels_1,
                                            scan_time=scan_time)
+            
+            # Flush orphan counts from forward transition
+            lines_to_flush = int(np.ceil(self.last_transition_time / (scan_time / n_pixels_1)))
+            if lines_to_flush > 0:
+                _ = self.counter_controller.sample_nbatches_counts(n_batches=lines_to_flush, sum_counts=False)
+            
             # Update the buffer
             #output[index] = single_scan
 
@@ -292,6 +299,11 @@ class ScanController:
                             stop=start_1,
                             n_pixels=n_pixels_1,
                             scan_time=self.inter_scan_settle_time)
+
+            # Flush orphan counts from return transition
+            lines_to_flush = int(np.ceil(self.last_transition_time / (scan_time / n_pixels_1)))
+            if lines_to_flush > 0:
+                _ = self.counter_controller.sample_nbatches_counts(n_batches=lines_to_flush, sum_counts=False)
 
             # Yield a single scan
             yield single_scan
