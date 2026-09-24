@@ -183,8 +183,9 @@ class WebSqTimedCounter:
     def sample_nbatches_counts(
         self, n_batches: int = 1, sum_counts: bool = True
     ) -> np.ndarray:
-        lines = self._stream.read_n_lines(n_batches)
-        totals = [float(line) for line in lines]
+        totals: list[float] = []
+        for _ in range(n_batches):
+            totals.append(self._read_one_count())
         arr = np.asarray(totals, dtype=np.float64)
         if sum_counts:
             return np.array([float(np.sum(arr))], dtype=np.float64)
