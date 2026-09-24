@@ -123,7 +123,7 @@ class ScanController:
         self.busy=True
 
         # Start the counter
-        logger.info('Starting counter task on DAQ.')
+        logger.info('Starting counter task.')
         self.counter_controller.start()
 
         # Get the axis controller depending on which axis is requested
@@ -250,7 +250,7 @@ class ScanController:
             raise ValueError(f'Requested axis_2 {axis_2} is invalid.')
         
         # Start the counter
-        logger.info('Starting counter task on DAQ.')
+        logger.info('Starting counter task.')
         self.counter_controller.start()
 
         # Get the positions for the slow scan axis
@@ -285,19 +285,10 @@ class ScanController:
                 self.stop()
                 return
 
-            # Set back to original position on fast scan axis
-            #self._set_axis(axis_controller=axis_controller_1, position=start_1)
-            # Slow scan back to start for smooth scanning?
-            self._scan_axis(axis_controller=axis_controller_1,
-                            start=stop_1,
-                            stop=start_1,
-                            n_pixels=n_pixels_1,
-                            scan_time=self.inter_scan_settle_time)
-
-            # Flush orphan counts from return transition
-            lines_to_flush = int(np.ceil(self.last_transition_time / (scan_time / n_pixels_1)))
-            if lines_to_flush > 0:
-                _ = self.counter_controller.sample_nbatches_counts(n_batches=lines_to_flush, sum_counts=False)
+            # Set back to original position on fast scan axis (no data collection during return)
+            self._set_axis(axis_controller=axis_controller_1, position=start_1)
+            # Brief settle time between rows
+            time.sleep(self.inter_scan_settle_time)
 
             # Yield a single scan
             yield single_scan
