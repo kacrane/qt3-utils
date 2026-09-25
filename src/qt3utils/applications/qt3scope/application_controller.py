@@ -89,6 +89,14 @@ class ScopeController:
         # Configure the DAQ sampling time
         self.counter_controller.configure_sample_time(sample_time=sample_time)
 
+        # Drain stale measurements collected with old integration time
+        time.sleep(0.1)
+        for _ in range(5):
+            try:
+                self.counter_controller.sample_batch_counts()  # discard
+            except:
+                pass
+
         # Record the starting time
         start_time = time.time()
 

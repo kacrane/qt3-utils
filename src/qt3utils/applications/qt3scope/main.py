@@ -1,7 +1,6 @@
 import importlib
 import importlib.resources
 import logging
-logging.basicConfig(level=logging.DEBUG)
 from typing import Optional
 
 import numpy as np
