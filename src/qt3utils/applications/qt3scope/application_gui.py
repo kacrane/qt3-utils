@@ -3,6 +3,7 @@ import logging
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
 import tkinter as tk
 
