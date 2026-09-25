@@ -200,8 +200,6 @@ class ScanController:
             # Store in the buffer
             output[index] = counts
             
-            if index % 10 == 0:
-        
         row_time = time_module.perf_counter() - row_start
         logger.info(f'Row completed: {row_time:.2f}s for {n_pixels} pixels')
 
