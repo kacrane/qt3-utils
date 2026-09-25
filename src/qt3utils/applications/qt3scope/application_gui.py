@@ -48,7 +48,7 @@ class ScopeApplicationView:
         self.data_viewport.ax.set_xlim(0, 30)  # 30 seconds at 0.03s/sample
         self.data_viewport.ax.set_ylim(y_axis_limits)
 
-        self.data_viewport.ax.set_xlabel(f'Time (mm:ss)', fontsize=14)
+        self.data_viewport.ax.set_xlabel(f'Time (s)', fontsize=14)
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
@@ -75,7 +75,7 @@ class ScopeApplicationView:
         else:
             self.data_viewport.ax.set_xlim(0, 1)
 
-        self.data_viewport.ax.set_xlabel(f'Time (mm:ss)', fontsize=14)
+        self.data_viewport.ax.set_xlabel(f'Time (s)', fontsize=14)
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
