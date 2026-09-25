@@ -168,9 +168,14 @@ class ScanController:
         # Configure the counter controller
         self.counter_controller.configure_sample_time(sample_time=sample_time)
         
-        # Settle time after integration period change
+        # Drain stale measurements collected with old integration time
         import time as time_module
-        time_module.sleep(1.0)
+        time_module.sleep(0.1)  # brief wait for new measurements to arrive
+        for _ in range(5):
+            try:
+                self.counter_controller.sample_batch_counts()  # discard
+            except:
+                pass
 
         # Generate the positions to scan according to the usual 
         # numpy.linspace implementation.
