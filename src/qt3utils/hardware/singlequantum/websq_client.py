@@ -135,3 +135,27 @@ class CountsStream:
             self._buf += chunk
         line_bytes, self._buf = self._buf.split(b"\n", 1)
         return line_bytes.decode("utf-8", errors="replace").strip()
+
+    def read_available_lines(self) -> list[str]:
+        """Read all immediately available lines from buffer (non-blocking)."""
+        import socket
+        lines = []
+        self._sock.setblocking(False)
+        try:
+            while True:
+                try:
+                    chunk = self._sock.recv(4096)
+                    if not chunk:
+                        break
+                    self._buf += chunk
+                except BlockingIOError:
+                    break
+        finally:
+            self._sock.setblocking(True)
+        
+        # Extract all complete lines from buffer
+        while b"\n" in self._buf:
+            line_bytes, self._buf = self._buf.split(b"\n", 1)
+            lines.append(line_bytes.decode("utf-8", errors="replace").strip())
+        
+        return lines
