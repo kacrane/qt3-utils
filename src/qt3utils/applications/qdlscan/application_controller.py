@@ -306,7 +306,7 @@ class ScanController:
             # Drain any buffered counts from row transition (non-blocking)
             drained = self.counter_controller.drain_buffered_counts()
             if drained > 0:
-                logger.debug(f'Row {index}: drained {drained} buffered counts')
+                logger.info(f'Row {index}: drained {drained} buffered counts')
             
             # Yield a single scan
             yield single_scan
