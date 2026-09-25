@@ -52,7 +52,7 @@ class ScopeApplicationView:
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
-        self.data_viewport.fig.tight_layout()
+        self.data_viewport.fig.subplots_adjust(left=0.15, right=0.95, top=0.95, bottom=0.15)
 
         self.data_viewport.canvas.draw()
 
