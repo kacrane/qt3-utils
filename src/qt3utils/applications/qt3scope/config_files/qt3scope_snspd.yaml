@@ -18,7 +18,6 @@ QT3SCOPE:
       signal_terminal : PFI0
       clock_terminal :
       clock_rate: 100000
-      sample_time_in_seconds : 0.03
       read_write_timeout : 10
       signal_counter : ctr2
 
@@ -29,7 +28,6 @@ QT3SCOPE:
       daq_name : Dev1
       channel : ai1
       clock_rate: 100000
-      sample_time_in_seconds : 0.03
       read_write_timeout : 10
       min_val : -10.0
       max_val : 10.0
