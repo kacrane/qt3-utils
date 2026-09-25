@@ -55,6 +55,8 @@ class ScopeApplicationView:
         # Format x-axis as mm:ss for elapsed time
         ax = self.data_viewport.ax
         ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x//60)}:{int(x%60):02d}'))
+        self.data_viewport.ax.xaxis.set_major_formatter()
+        self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         self.data_viewport.canvas.draw()
 
     def update_figure(self) -> None:
@@ -82,6 +84,8 @@ class ScopeApplicationView:
         # Format x-axis as mm:ss for elapsed time
         ax = self.data_viewport.ax
         ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x//60)}:{int(x%60):02d}'))
+        self.data_viewport.ax.xaxis.set_major_formatter()
+        self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         self.data_viewport.canvas.draw()
 
 
