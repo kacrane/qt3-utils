@@ -271,7 +271,7 @@ class ScopeApplication:
             # Although it should be negligible.
             # In this current configuration the logged time corresponds to the end of the
             # sample time bin.
-            self.data_x.append(time.time() - start_time)
+            self.data_x.append(time.time())
             # Save the data
             self.data_y.append(sample)
             # Update the viewport
