@@ -3,8 +3,7 @@ import logging
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import datetime
+
 
 import tkinter as tk
 
@@ -53,6 +52,9 @@ class ScopeApplicationView:
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
+        # Format x-axis as mm:ss for elapsed time
+        ax = self.data_viewport.ax
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x//60)}:{int(x%60):02d}'))
         self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
         self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         self.data_viewport.canvas.draw()
@@ -65,20 +67,13 @@ class ScopeApplicationView:
         self.data_viewport.ax.clear()
 
         # Plot the data line
-        if len(self.application.data_x) > 0:
-            x_data = self.application.data_x[-self.application.max_samples_to_plot:]
-            x_datetime = [datetime.utcfromtimestamp(t) for t in x_data]
-        else:
-            x_datetime = []
-        self.data_viewport.ax.plot(x_datetime, self.application.data_y[-self.application.max_samples_to_plot:],
+        self.data_viewport.ax.plot(self.application.data_x[-self.application.max_samples_to_plot:], self.application.data_y[-self.application.max_samples_to_plot:],
                                    color='k',
                                    linewidth=1.5)
 
         if len(self.application.data_x) > 0:
             x_data = self.application.data_x[-self.application.max_samples_to_plot:]
-            x_datetime = [datetime.utcfromtimestamp(t) for t in x_data]
-            self.data_viewport.ax.set_xlim(x_datetime[0], x_datetime[-1])
-            self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+            self.data_viewport.ax.set_xlim(x_data[0], x_data[-1])
         else:
             self.data_viewport.ax.set_xlim(0, 1)
 
@@ -86,6 +81,9 @@ class ScopeApplicationView:
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
+        # Format x-axis as mm:ss for elapsed time
+        ax = self.data_viewport.ax
+        ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x//60)}:{int(x%60):02d}'))
         self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
         self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         self.data_viewport.canvas.draw()
