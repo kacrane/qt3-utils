@@ -45,13 +45,14 @@ class ScopeApplicationView:
         # Get the y_axis limits to draw the position lines
         y_axis_limits = self.data_viewport.ax.get_ylim()
 
-        self.data_viewport.ax.set_xlim(0, self.application.max_samples_to_plot)
+        self.data_viewport.ax.set_xlim(0, 30)  # 30 seconds at 0.03s/sample
         self.data_viewport.ax.set_ylim(y_axis_limits)
 
-        self.data_viewport.ax.set_xlabel(f'Sample index', fontsize=14)
+        self.data_viewport.ax.set_xlabel(f'Time (mm:ss)', fontsize=14)
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
+        self.data_viewport.fig.tight_layout()
 
         self.data_viewport.canvas.draw()
 
