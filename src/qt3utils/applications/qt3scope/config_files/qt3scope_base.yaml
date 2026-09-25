@@ -16,7 +16,7 @@ QT3SCOPE:
       signal_terminal : PFI0        # DAQ Write channel
       clock_terminal :              # Digital input terminal for external clock (blank if using internal)
       clock_rate: 100000            # NI DAQ clock rate in Hz
-      sample_time_in_seconds : 1    # Sampling time in seconds (updates later in scan)
+      sample_time_in_seconds : 0.03    # Sampling time in seconds (updates later in scan)
       read_write_timeout : 10       # timeout in seconds for read/write operations
       signal_counter : ctr2         # NIDAQ counter to use for count
 
@@ -27,7 +27,7 @@ QT3SCOPE:
       daq_name : Dev1
       channel : ai1
       clock_rate: 100000
-      sample_time_in_seconds : 1
+      sample_time_in_seconds : 0.03
       read_write_timeout : 10
       min_val : -10.0
       max_val : 10.0
