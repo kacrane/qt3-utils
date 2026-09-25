@@ -167,6 +167,10 @@ class ScanController:
         sample_time = scan_time / n_pixels
         # Configure the counter controller
         self.counter_controller.configure_sample_time(sample_time=sample_time)
+        
+        # Settle time after integration period change
+        import time as time_module
+        time_module.sleep(0.2)
 
         # Generate the positions to scan according to the usual 
         # numpy.linspace implementation.
