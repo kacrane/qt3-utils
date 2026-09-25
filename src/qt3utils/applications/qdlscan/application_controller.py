@@ -170,7 +170,7 @@ class ScanController:
         
         # Settle time after integration period change
         import time as time_module
-        time_module.sleep(0.2)
+        time_module.sleep(1.0)
 
         # Generate the positions to scan according to the usual 
         # numpy.linspace implementation.
