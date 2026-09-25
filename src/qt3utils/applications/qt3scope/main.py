@@ -92,7 +92,7 @@ class ScopeApplication:
         self.total_measurement_time = 0
 
         # Parameters
-        self.max_samples_to_plot = 500
+        self.max_samples_to_plot = 1000  # 30 seconds at default 0.03s sample time
         self.max_allowed_samples = 1000000  # 1e6 ~ 3 hours at 0.01 s per sample.
         self.daq_parameters = {
             'sample_time': 0.03,
@@ -271,7 +271,7 @@ class ScopeApplication:
             # Although it should be negligible.
             # In this current configuration the logged time corresponds to the end of the
             # sample time bin.
-            self.data_x.append(time.time() - start_time)
+            self.data_x.append(time.time())
             # Save the data
             self.data_y.append(sample)
             # Update the viewport
