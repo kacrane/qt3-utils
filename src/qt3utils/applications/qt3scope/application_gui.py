@@ -66,7 +66,7 @@ class ScopeApplicationView:
         # Plot the data line
         if len(self.application.data_x) > 0:
             x_data = self.application.data_x[-self.application.max_samples_to_plot:]
-            x_datetime = [datetime.fromtimestamp(t) for t in x_data]
+            x_datetime = [datetime.utcfromtimestamp(t) for t in x_data]
         else:
             x_datetime = []
         self.data_viewport.ax.plot(x_datetime, self.application.data_y[-self.application.max_samples_to_plot:],
@@ -75,7 +75,7 @@ class ScopeApplicationView:
 
         if len(self.application.data_x) > 0:
             x_data = self.application.data_x[-self.application.max_samples_to_plot:]
-            x_datetime = [datetime.fromtimestamp(t) for t in x_data]
+            x_datetime = [datetime.utcfromtimestamp(t) for t in x_data]
             self.data_viewport.ax.set_xlim(x_datetime[0], x_datetime[-1])
             self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
             self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
