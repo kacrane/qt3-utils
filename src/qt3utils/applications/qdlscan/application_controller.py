@@ -180,17 +180,31 @@ class ScanController:
         output = np.zeros(shape=n_pixels)
 
         # Then iterate through the positions
+        import time as time_module
+        row_start = time_module.perf_counter()
         for index, position in enumerate(positions):
             # Stop early if requested (e.g. scan window was closed)
             if self.stop_scan:
                 logger.info('Stopping scan early due to stop request.')
                 break
+            px_start = time_module.perf_counter()
             # Move to the desired position
             self._set_axis(axis_controller=axis_controller, position=position)
+            move_time = time_module.perf_counter() - px_start
+            
+            read_start = time_module.perf_counter()
             # Get the counts
             counts = self.counter_controller.sample_batch_counts()
+            read_time = time_module.perf_counter() - read_start
+            
             # Store in the buffer
             output[index] = counts
+            
+            if index % 10 == 0:
+                logger.info(f'Pixel {index}: move={move_time*1000:.1f}ms, read={read_time*1000:.1f}ms')
+        
+        row_time = time_module.perf_counter() - row_start
+        logger.info(f'Row completed: {row_time:.2f}s for {n_pixels} pixels')
 
         # Set the scanning flag
         self.scanning = False
