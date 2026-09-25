@@ -3,8 +3,6 @@ import logging
 import matplotlib
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from datetime import datetime
 
 import tkinter as tk
 
@@ -71,8 +69,6 @@ class ScopeApplicationView:
         if len(self.application.data_x) > 0:
             x_data = self.application.data_x[-self.application.max_samples_to_plot:]
             self.data_viewport.ax.set_xlim(x_data[0], x_data[-1])
-            self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-            self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         else:
             self.data_viewport.ax.set_xlim(0, 1)
 
