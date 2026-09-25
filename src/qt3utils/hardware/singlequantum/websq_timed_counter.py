@@ -170,7 +170,11 @@ class WebSqTimedCounter:
             return 0.0
         try:
             self.read_lock = True
+            import time as time_module
+            read_start = time_module.perf_counter()
             line = self._stream.read_line()
+            read_time = time_module.perf_counter() - read_start
+            logger.debug(f'read_one_count took {read_time*1000:.1f}ms')
             return parse_counts_line(line, self.detector_index)
         finally:
             self.read_lock = False
