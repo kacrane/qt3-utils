@@ -58,12 +58,12 @@ class ScanController:
 
     def get_position(self):
         '''
-        Returns the position based off of the last write values of the controllers
+        Returns the current position in microns from all three axis controllers
         '''
-        x = self.x_axis_controller.last_write_value
-        y = self.y_axis_controller.last_write_value
-        z = self.z_axis_controller.last_write_value
-        return x,y,z
+        x = self.x_axis_controller.get_current_position()
+        y = self.y_axis_controller.get_current_position()
+        z = self.z_axis_controller.get_current_position()
+        return x, y, z
 
     def set_axis(self, axis: str, position: float):
         '''
