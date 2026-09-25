@@ -53,7 +53,8 @@ class ScopeApplicationView:
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
-
+        self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+        self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         self.data_viewport.canvas.draw()
 
     def update_figure(self) -> None:
@@ -78,7 +79,6 @@ class ScopeApplicationView:
             x_datetime = [datetime.utcfromtimestamp(t) for t in x_data]
             self.data_viewport.ax.set_xlim(x_datetime[0], x_datetime[-1])
             self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-            self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         else:
             self.data_viewport.ax.set_xlim(0, 1)
 
@@ -86,8 +86,8 @@ class ScopeApplicationView:
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
-
-        self.data_viewport.fig.tight_layout()
+        self.data_viewport.ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+        self.data_viewport.fig.autofmt_xdate(rotation=45, ha='right')
         self.data_viewport.canvas.draw()
 
 
