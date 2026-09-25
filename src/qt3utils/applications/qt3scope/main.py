@@ -1,6 +1,7 @@
 import importlib
 import importlib.resources
 import logging
+logging.basicConfig(level=logging.DEBUG)
 from typing import Optional
 
 import numpy as np
@@ -95,7 +96,7 @@ class ScopeApplication:
         self.max_samples_to_plot = 500
         self.max_allowed_samples = 1000000  # 1e6 ~ 3 hours at 0.01 s per sample.
         self.daq_parameters = {
-            'sample_time': 0.01,
+            'sample_time': 0.03,
             'get_rate': True,
         }
         self.timestamp = datetime.datetime.now()
