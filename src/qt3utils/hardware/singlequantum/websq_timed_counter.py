@@ -190,3 +190,14 @@ class WebSqTimedCounter:
         if sum_counts:
             return np.array([float(np.sum(arr))], dtype=np.float64)
         return arr
+    
+    def drain_buffered_counts(self) -> int:
+        """Drain all available buffered counts (non-blocking). Returns count of lines drained."""
+        if not self.running or self._stream is None:
+            return 0
+        try:
+            self.read_lock = True
+            lines = self._stream.read_available_lines()
+            return len(lines)
+        finally:
+            self.read_lock = False
