@@ -198,6 +198,9 @@ class WebSqTimedCounter:
         try:
             self.read_lock = True
             lines = self._stream.read_available_lines()
-            return len(lines)
+            drained = len(lines)
+            if drained > 0:
+                logger.info(f'Drained {drained} buffered counts')
+            return drained
         finally:
             self.read_lock = False
