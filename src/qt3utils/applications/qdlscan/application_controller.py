@@ -123,7 +123,7 @@ class ScanController:
         self.busy=True
 
         # Start the counter
-        logger.info('Starting counter task.')
+        logger.info('Starting counter task on DAQ.')
         self.counter_controller.start()
 
         # Get the axis controller depending on which axis is requested
@@ -164,8 +164,6 @@ class ScanController:
         self.scanning = True
 
         # Calculate the time per pixel
-        # Transition time is measured separately; use 8.5ms empirical value
-        self.last_transition_time = 0.0085
         sample_time = scan_time / n_pixels
         # Configure the counter controller
         self.counter_controller.configure_sample_time(sample_time=sample_time)
@@ -250,7 +248,7 @@ class ScanController:
             raise ValueError(f'Requested axis_2 {axis_2} is invalid.')
         
         # Start the counter
-        logger.info('Starting counter task.')
+        logger.info('Starting counter task on DAQ.')
         self.counter_controller.start()
 
         # Get the positions for the slow scan axis
@@ -262,20 +260,26 @@ class ScanController:
             self._set_axis(axis_controller=axis_controller_2, position=position)
             # Let the axis settle before next scan
             time.sleep(self.inter_scan_settle_time)
-            # Scan axis 1
-            single_scan =  self._scan_axis(axis_controller=axis_controller_1,
-                                           start=start_1,
-                                           stop=stop_1,
-                                           n_pixels=n_pixels_1,
-                                           scan_time=scan_time)
             
-            # Flush orphan counts from forward transition
-            lines_to_flush = int(np.ceil(self.last_transition_time / (scan_time / n_pixels_1)))
-            if lines_to_flush > 0:
-                _ = self.counter_controller.sample_nbatches_counts(n_batches=lines_to_flush, sum_counts=False)
-            
-            # Update the buffer
-            #output[index] = single_scan
+            # Snake scan: alternate forward/backward to use return time productively
+            if index % 2 == 0:
+                # Even rows: scan forward (start -> stop)
+                single_scan = self._scan_axis(axis_controller=axis_controller_1,
+                                             start=start_1,
+                                             stop=stop_1,
+                                             n_pixels=n_pixels_1,
+                                             scan_time=scan_time)
+                logger.debug(f'Row {index}: forward scan')
+            else:
+                # Odd rows: scan backward (stop -> start) and flip horizontally
+                single_scan = self._scan_axis(axis_controller=axis_controller_1,
+                                             start=stop_1,
+                                             stop=start_1,
+                                             n_pixels=n_pixels_1,
+                                             scan_time=scan_time)
+                # Flip the row to account for backward scan direction
+                single_scan = single_scan[::-1]
+                logger.debug(f'Row {index}: backward scan (flipped)')
 
             # If a stop was requested mid-row, don't yield the partial row: leave it
             # unstored so that resuming (`continue_scan`) redoes this row in full
@@ -284,11 +288,6 @@ class ScanController:
                 logger.info('Stopping scan.')
                 self.stop()
                 return
-
-            # Set back to original position on fast scan axis (no data collection during return)
-            self._set_axis(axis_controller=axis_controller_1, position=start_1)
-            # Brief settle time between rows
-            time.sleep(self.inter_scan_settle_time)
 
             # Yield a single scan
             yield single_scan
