@@ -62,17 +62,22 @@ class ScopeApplicationView:
         self.data_viewport.ax.clear()
 
         # Plot the data line
-        self.data_viewport.ax.plot(self.application.data_y[-self.application.max_samples_to_plot:],
+        self.data_viewport.ax.plot(self.application.data_x[-self.application.max_samples_to_plot:], self.application.data_y[-self.application.max_samples_to_plot:],
                                    color='k',
                                    linewidth=1.5)
 
-        self.data_viewport.ax.set_xlim(0, self.application.max_samples_to_plot)
+        if len(self.application.data_x) > 0:
+            x_data = self.application.data_x[-self.application.max_samples_to_plot:]
+            self.data_viewport.ax.set_xlim(x_data[0], x_data[-1])
+        else:
+            self.data_viewport.ax.set_xlim(0, 1)
 
-        self.data_viewport.ax.set_xlabel(f'Sample index', fontsize=14)
+        self.data_viewport.ax.set_xlabel(f'Time (s)', fontsize=14)
         self.y_label = self.application.scope_intensity_ylabel()
         self.data_viewport.ax.set_ylabel(self.y_label, fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
 
+        self.data_viewport.fig.tight_layout()
         self.data_viewport.canvas.draw()
 
 
