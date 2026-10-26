@@ -16,7 +16,9 @@ from qt3utils.applications.qt3power.calibration import (
     STATUS_DEFAULT,
     STATUS_OLDER,
     STATUS_WRONG_OPTICS,
+    calibration_gains,
     calibration_optics,
+    gain_label,
     calibration_status,
     default_calibration_filename,
     newest_calibration_file,
@@ -251,7 +253,7 @@ class PowerMonitorApp:
             name: tk.StringVar(value=_gain_text(saved_gains.get(name))) for name in DETECTOR_NAMES
         }
         for name, var in self.gain_vars.items():
-            var.trace_add("write", lambda *_a: self._save_gains())
+            var.trace_add("write", lambda *_a: self._on_gain_change())
         saved_lw = load_settings().get("linewidth_nm", {})
         self.linewidths: Dict[str, float] = {
             name: float(saved_lw.get(name, 0.0))
@@ -571,8 +573,18 @@ class PowerMonitorApp:
         text = self.gain_vars[name].get().replace("dB", "").strip()
         return int(text) if text else None
 
-    def _save_gains(self) -> None:
-        update_settings({"gain_db": {name: self.gain_db(name) for name in DETECTOR_NAMES}})
+    def _on_gain_change(self) -> None:
+        try:
+            update_settings({"gain_db": {name: self.gain_db(name) for name in DETECTOR_NAMES}})
+        except OSError:
+            pass
+        if not getattr(self, "cal_status_labels", None):
+            return  # still building the GUI
+        # Like the dichroic: load the newest calibration matching the new gain, if any.
+        self._load_newest_calibration_for_installed_optics()
+        self._refresh_conversion_display()
+        if self.calibration_window is not None:
+            self.calibration_window.refresh()
 
     # ---- Wavelength / calibration ----
 
@@ -789,6 +801,7 @@ class PowerMonitorApp:
                 self.calibration_path[name],
                 self.calibration_dirty[name],
                 self.path_model.installed,
+                self.gain_db(name),
                 library,
             )
             self.cal_status_labels[name].config(text=text, fg=STATUS_COLORS[status])
@@ -825,7 +838,7 @@ class PowerMonitorApp:
         for name in DETECTOR_NAMES:
             if self.calibration_dirty[name]:
                 continue
-            info = newest_calibration_file(library, name, self.path_model.installed)
+            info = newest_calibration_file(library, name, self.path_model.installed, self.gain_db(name))
             if info is None:
                 continue
             try:
@@ -865,7 +878,9 @@ class PowerMonitorApp:
         path = filedialog.asksaveasfilename(
             title=f"Save {name} calibration",
             initialdir=str(CALIBRATIONS_DIR),
-            initialfile=default_calibration_filename(name, self.path_model.installed),
+            initialfile=default_calibration_filename(
+                name, self.path_model.installed, (calibration_gains(self.detectors[name]) or [None])[0]
+            ),
             defaultextension=".json",
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
@@ -1271,13 +1286,20 @@ class CalibrationWindow:
             )
             return
         det = self._detector()
+        mismatch = []
         if det.points and calibration_optics(det) != [optics_label(path)]:
+            mismatch.append(
+                f"was measured with {'; '.join(calibration_optics(det))}, but {optics_label(path)} is installed"
+            )
+        if det.points and calibration_gains(det) not in ([], [gain]):
+            mismatch.append(f"was taken at {gain_label(calibration_gains(det))}, but {gain} dB is set")
+        if mismatch:
             answer = messagebox.askyesnocancel(
                 "Add Point",
-                f"The {name} calibration in use was measured with {'; '.join(calibration_optics(det))}, "
-                f"but {optics_label(path)} is installed.\n\n"
-                f"Yes: start a new {name} calibration for {optics_label(path)} (saved files are not changed).\n"
-                "No: add this point to the current calibration (mixed optics).",
+                f"The {name} calibration in use " + " and ".join(mismatch) + ".\n\n"
+                f"Yes: start a new {name} calibration for {optics_label(path)} at {gain} dB "
+                "(saved files are not changed).\n"
+                "No: add this point to the current calibration anyway (mixed).",
                 parent=self.win,
             )
             if answer is None:

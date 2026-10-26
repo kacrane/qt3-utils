@@ -334,12 +334,22 @@ def calibration_optics(det: DetectorCalibration) -> List[str]:
     return sorted({optics_label(p.path) for p in det.points})
 
 
+def calibration_gains(det: DetectorCalibration) -> List[int]:
+    """Sorted distinct gains (dB) of a detector's calibration points; points without a gain are skipped."""
+    return sorted({p.gain_db for p in det.points if p.gain_db is not None})
+
+
+def gain_label(gains: List[int]) -> str:
+    return ", ".join(f"{g} dB" for g in gains) or "unknown gain"
+
+
 def default_calibration_filename(
-    name: str, installed: Dict[str, str], when: Optional[datetime.datetime] = None
+    name: str, installed: Dict[str, str], gain_db: Optional[int], when: Optional[datetime.datetime] = None
 ) -> str:
     when = when or datetime.datetime.now()
     optics = "_".join(optic for _slot, optic in sorted(installed.items())) or "no-optics"
-    return f"qt3power_cal_{name}_{optics}_{when:%Y%m%d-%H%M}.json"
+    gain = f"{gain_db}dB" if gain_db is not None else "gain-unknown"
+    return f"qt3power_cal_{name}_{optics}_{gain}_{when:%Y%m%d-%H%M}.json"
 
 
 @dataclass
@@ -347,6 +357,7 @@ class CalibrationFileInfo:
     path: Path
     saved: datetime.datetime
     optics: Dict[str, List[str]]  # detector -> optics labels of its points (detectors with points only)
+    gains: Dict[str, List[int]]  # detector -> gains (dB) of its points
 
 
 def scan_calibration_files(folders: List[Path]) -> List[CalibrationFileInfo]:
@@ -363,29 +374,41 @@ def scan_calibration_files(folders: List[Path]) -> List[CalibrationFileInfo]:
                     saved = datetime.datetime.fromisoformat(data["saved"])
                 except Exception:
                     saved = datetime.datetime.fromtimestamp(f.stat().st_mtime)
-                optics = {}
+                optics, gains = {}, {}
                 for n, d in data.get("detectors", {}).items():
                     det = DetectorCalibration.from_dict(n, d)
                     if det.points:
                         optics[n] = calibration_optics(det)
-                found[f.resolve()] = CalibrationFileInfo(f, saved, optics)
+                        gains[n] = calibration_gains(det)
+                found[f.resolve()] = CalibrationFileInfo(f, saved, optics, gains)
             except Exception:
                 continue  # unreadable or not a calibration: ignore
     return sorted(found.values(), key=lambda i: i.saved, reverse=True)
 
 
+def _gain_matches(gains: List[int], gain_db: Optional[int]) -> bool:
+    """A calibration matches the set gain if it was taken at that one gain. Unknown on either side matches."""
+    return gain_db is None or not gains or gains == [gain_db]
+
+
 def newest_calibration_file(
-    library: List[CalibrationFileInfo], name: str, installed: Dict[str, str]
+    library: List[CalibrationFileInfo], name: str, installed: Dict[str, str], gain_db: Optional[int]
 ) -> Optional[CalibrationFileInfo]:
-    """Newest file holding a calibration for `name` measured only with the installed optics."""
+    """Newest file holding a calibration for `name` measured only with the installed optics and set gain."""
     current = [optics_label(installed)]
-    return next((i for i in library if i.optics.get(name) == current), None)
+    return next(
+        (
+            i for i in library
+            if i.optics.get(name) == current and _gain_matches(i.gains.get(name, []), gain_db)
+        ),
+        None,
+    )
 
 
 # Calibration status shown in the main window, per detector.
 STATUS_CURRENT = "current"  # newest saved calibration for the installed optics (or unsaved, same optics)
 STATUS_OLDER = "older"  # right optics, but a newer file with the same optics exists
-STATUS_WRONG_OPTICS = "wrong_optics"  # measured with different optics than installed
+STATUS_WRONG_OPTICS = "wrong_optics"  # measured with different optics or gain than now set
 STATUS_DEFAULT = "default"  # no calibration: Thorlabs curves
 
 
@@ -394,6 +417,7 @@ def calibration_status(
     loaded_path: Optional[Path],
     dirty: bool,
     installed: Dict[str, str],
+    gain_db: Optional[int],
     library: List[CalibrationFileInfo],
 ) -> Tuple[str, str]:
     """Return (status, text) describing the calibration in use for one detector."""
@@ -406,9 +430,12 @@ def calibration_status(
     current = optics_label(installed)
     if optics != [current]:
         return STATUS_WRONG_OPTICS, f"{name} - measured with {'; '.join(optics)}, but {current} is installed"
+    gains = calibration_gains(det)
+    if not _gain_matches(gains, gain_db):
+        return STATUS_WRONG_OPTICS, f"{name} - taken at {gain_label(gains)}, but {gain_db} dB is set"
     if loaded_path is None or dirty:
         return STATUS_CURRENT, f"{name} - {current}"
-    newest = newest_calibration_file(library, det.name, installed)
+    newest = newest_calibration_file(library, det.name, installed, gain_db)
     loaded_saved = next(
         (i.saved for i in library if i.path.resolve() == Path(loaded_path).resolve()), None
     )
