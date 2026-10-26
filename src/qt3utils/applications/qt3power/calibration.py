@@ -32,7 +32,6 @@ import numpy as np
 
 DEFAULT_CALIBRATION_PATH = Path.home() / ".qt3utils" / "qt3power_calibration.json"
 SETTINGS_PATH = Path.home() / ".qt3utils" / "qt3power_settings.json"
-DEFAULT_WAVELENGTH_NM = 1550.0
 
 # Thorlabs PDA50B2 (and PDA30B2) typical responsivity (A/W) vs wavelength (nm),
 # from Thorlabs "Ge Biased Photodetectors Responsivity" raw data (ge_biased_responsivity_5.xlsx).
@@ -227,18 +226,22 @@ def load_calibrations(path: Path) -> Dict[str, DetectorCalibration]:
     }
 
 
-def load_last_wavelength(path: Path = SETTINGS_PATH) -> float:
-    """Last wavelength set in qt3power, or DEFAULT_WAVELENGTH_NM if none was saved."""
+def load_last_wavelengths(path: Path = SETTINGS_PATH) -> Dict[str, float]:
+    """Last wavelength set for each detector; a detector never set gets its reference wavelength."""
+    wavelengths = dict(DEFAULT_REF_WAVELENGTH_NM)
     try:
         with open(Path(path).expanduser()) as f:
-            wl = float(json.load(f)["wavelength_nm"])
-        return wl if wl > 0 else DEFAULT_WAVELENGTH_NM
+            saved = json.load(f).get("wavelength_nm", {})
+        for name, wl in saved.items():
+            if float(wl) > 0:
+                wavelengths[name] = float(wl)
     except Exception:
-        return DEFAULT_WAVELENGTH_NM
+        pass
+    return wavelengths
 
 
-def save_last_wavelength(wavelength_nm: float, path: Path = SETTINGS_PATH) -> None:
+def save_last_wavelengths(wavelengths: Dict[str, float], path: Path = SETTINGS_PATH) -> None:
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
-        json.dump({"wavelength_nm": wavelength_nm}, f)
+        json.dump({"wavelength_nm": wavelengths}, f, indent=2)

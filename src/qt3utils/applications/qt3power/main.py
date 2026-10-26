@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple, Union
 
 import nidaqmx
 
@@ -12,9 +12,9 @@ from qt3utils.applications.qt3power.calibration import (
     CalibrationPoint,
     DetectorCalibration,
     load_calibrations,
-    load_last_wavelength,
+    load_last_wavelengths,
     save_calibrations,
-    save_last_wavelength,
+    save_last_wavelengths,
 )
 
 DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
@@ -26,8 +26,8 @@ _STALE_LOCK_TOOLTIP = (
 )
 
 
-def _attach_tooltip(widget: tk.Widget, text: str) -> None:
-    """Show text in a borderless Toplevel while the pointer is over widget."""
+def _attach_tooltip(widget: tk.Widget, text: Union[str, Callable[[], str]]) -> None:
+    """Show text (or text() if callable) in a borderless Toplevel while the pointer is over widget."""
     tip_window: Dict[str, Optional[tk.Toplevel]] = {"w": None}
 
     def on_enter(_event: object) -> None:
@@ -42,7 +42,7 @@ def _attach_tooltip(widget: tk.Widget, text: str) -> None:
         tw.wm_geometry(f"+{x}+{y}")
         lbl = tk.Label(
             tw,
-            text=text,
+            text=text() if callable(text) else text,
             justify="left",
             background="#ffffe0",
             relief="solid",
@@ -148,7 +148,8 @@ class PowerMonitorApp:
         self.update_interval_ms = 200  # ~5 Hz polling
         self.var_ignore_santec_lock = tk.BooleanVar(value=False)
 
-        self.wavelength_nm = load_last_wavelength()
+        self.wavelengths: Dict[str, float] = load_last_wavelengths()
+        self.wavelength_entries: Dict[str, tk.Entry] = {}
         self.detectors: Dict[str, DetectorCalibration] = {
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
@@ -206,27 +207,15 @@ class PowerMonitorApp:
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
 
-        # Wavelength and calibration
-        wl_frame = tk.LabelFrame(main_frame, text="Wavelength & Calibration")
-        wl_frame.pack(fill="x", pady=5)
-
-        tk.Label(wl_frame, text="Wavelength (nm):").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-        self.ent_wavelength = tk.Entry(wl_frame, width=10)
-        self.ent_wavelength.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        self.ent_wavelength.insert(0, f"{self.wavelength_nm:g}")
-        self.ent_wavelength.bind("<Return>", lambda _e: self.set_wavelength())
-        self.ent_wavelength.bind("<FocusOut>", lambda _e: self.set_wavelength())
-        tk.Button(wl_frame, text="Set", command=self.set_wavelength).grid(row=0, column=2, padx=5, pady=5)
-
-        btn_frame = tk.Frame(wl_frame)
-        btn_frame.grid(row=0, column=3, columnspan=3, sticky="w", padx=5)
-        tk.Button(btn_frame, text="Calibrate...", command=self.open_calibration_window).pack(side="left", padx=2)
-        tk.Button(btn_frame, text="Load Cal...", command=self.load_calibration_dialog).pack(side="left", padx=2)
-        tk.Button(btn_frame, text="Save Cal...", command=self.save_calibration_dialog).pack(side="left", padx=2)
-        tk.Button(btn_frame, text="Use Default Curve", command=self.clear_calibration).pack(side="left", padx=2)
-
-        self.lbl_conversion = tk.Label(wl_frame, text="", justify="left", font=("Arial", 9))
-        self.lbl_conversion.grid(row=1, column=0, columnspan=6, sticky="w", padx=5, pady=2)
+        # Calibration
+        cal_frame = tk.LabelFrame(main_frame, text="Calibration")
+        cal_frame.pack(fill="x", pady=5)
+        tk.Button(cal_frame, text="Calibrate...", command=self.open_calibration_window).pack(side="left", padx=4, pady=4)
+        tk.Button(cal_frame, text="Load Cal...", command=self.load_calibration_dialog).pack(side="left", padx=4, pady=4)
+        tk.Button(cal_frame, text="Save Cal...", command=self.save_calibration_dialog).pack(side="left", padx=4, pady=4)
+        tk.Button(cal_frame, text="Use Default Curve", command=self.clear_calibration).pack(side="left", padx=4, pady=4)
+        self.lbl_cal_source = tk.Label(cal_frame, text="")
+        self.lbl_cal_source.pack(side="left", padx=10)
 
         # Power display
         display_frame = tk.LabelFrame(main_frame, text="Photodetector Power")
@@ -247,6 +236,7 @@ class PowerMonitorApp:
             fg="#0044aa",
         )
         self.lbl_pda50b2_power.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        self._build_wavelength_entry(display_frame, "PDA50B2", row=0)
 
         tk.Label(display_frame, text="Voltage (V):").grid(
             row=1,
@@ -273,6 +263,7 @@ class PowerMonitorApp:
             fg="#006600",
         )
         self.lbl_pda100a2_power.grid(row=2, column=1, sticky="w", padx=5, pady=10)
+        self._build_wavelength_entry(display_frame, "PDA100A2", row=2)
 
         tk.Label(display_frame, text="Voltage (V):").grid(
             row=3,
@@ -286,6 +277,14 @@ class PowerMonitorApp:
 
         for child in display_frame.winfo_children():
             child.grid_configure(padx=5, pady=3)
+        display_frame.grid_columnconfigure(1, weight=1)
+
+        for name, labels in (
+            ("PDA50B2", (self.lbl_pda50b2_power, self.lbl_pda50b2_voltage)),
+            ("PDA100A2", (self.lbl_pda100a2_power, self.lbl_pda100a2_voltage)),
+        ):
+            for lbl in labels:
+                _attach_tooltip(lbl, lambda n=name: self._conversion_text(n))
 
         # Controls
         ctrl_frame = tk.Frame(main_frame)
@@ -376,55 +375,71 @@ class PowerMonitorApp:
 
     def _voltage_to_mw(self, detector: str, voltage: float) -> float:
         """Convert voltage (V) to power (mW) at the current wavelength."""
-        return self.detectors[detector].voltage_to_mw(voltage, self.wavelength_nm)
+        return self.detectors[detector].voltage_to_mw(voltage, self.wavelengths[detector])
 
     # ---- Wavelength / calibration ----
 
-    def set_wavelength(self) -> None:
-        text = self.ent_wavelength.get().strip()
+    def _build_wavelength_entry(self, parent: tk.Widget, name: str, row: int) -> None:
+        tk.Label(parent, text="Wavelength (nm):").grid(row=row, column=2, sticky="e", padx=5)
+        ent = tk.Entry(parent, width=8)
+        ent.grid(row=row, column=3, sticky="w", padx=5)
+        ent.insert(0, f"{self.wavelengths[name]:g}")
+        ent.bind("<Return>", lambda _e: self.set_wavelength(name))
+        ent.bind("<FocusOut>", lambda _e: self.set_wavelength(name))
+        self.wavelength_entries[name] = ent
+
+    def set_wavelength(self, name: str) -> None:
+        ent = self.wavelength_entries[name]
+        text = ent.get().strip()
         try:
             wl = float(text)
             if wl <= 0:
                 raise ValueError
         except ValueError:
-            messagebox.showerror("Wavelength", f"Invalid wavelength: {text!r}")
-            self.ent_wavelength.delete(0, tk.END)
-            self.ent_wavelength.insert(0, f"{self.wavelength_nm:g}")
+            messagebox.showerror("Wavelength", f"Invalid {name} wavelength: {text!r}")
+            ent.delete(0, tk.END)
+            ent.insert(0, f"{self.wavelengths[name]:g}")
             return
-        if wl == self.wavelength_nm:
+        if wl == self.wavelengths[name]:
             return
-        self.wavelength_nm = wl
+        self.wavelengths[name] = wl
         try:
-            save_last_wavelength(wl)
+            save_last_wavelengths(self.wavelengths)
         except OSError:
             pass  # remembering the wavelength is a convenience; don't block on it
         self._refresh_conversion_display()
 
-    def _refresh_conversion_display(self) -> None:
-        wl = self.wavelength_nm
-        lines = []
-        warn = False
-        for name in DETECTOR_NAMES:
-            det = self.detectors[name]
-            k, offset = det.factor_and_offset(wl)
-            if det.is_calibrated:
-                lo, hi = det.calibrated_range()
-                src = f"calibration, {len(det.points)} pts, {lo:g}-{hi:g} nm"
-                if not lo <= wl <= hi:
-                    src += ", EXTRAPOLATED with default curve shape"
-                    warn = True
-            elif det.curve is not None:
-                src = f"default {name} curve, R={det.responsivity(wl):.3f} A/W"
-                if not det.in_curve_range(wl):
-                    src += ", OUTSIDE CURVE RANGE (clamped)"
-                    warn = True
-            else:
-                src = "fixed, no responsivity curve"
-            off = f", offset {offset * 1000:+.2f} mV" if offset else ""
-            lines.append(f"{name}: {k:.4g} V/mW{off}  ({src})")
+    def _conversion_text(self, name: str) -> str:
+        """Tooltip text describing how this detector's voltage becomes power."""
+        det = self.detectors[name]
+        wl = self.wavelengths[name]
+        k, offset = det.factor_and_offset(wl)
+        lines = [f"{name} at {wl:g} nm: {k:.4g} V/mW"]
+        if offset:
+            lines.append(f"Offset: {offset * 1000:+.2f} mV")
+        if det.is_calibrated:
+            lo, hi = det.calibrated_range()
+            lines.append(f"Source: calibration, {len(det.points)} pts, {lo:g}-{hi:g} nm")
+            if not lo <= wl <= hi:
+                lines.append("Note: outside calibrated range, extrapolated with Thorlabs curve shape")
+        elif det.curve is not None:
+            lines.append(f"Source: Thorlabs {name} curve, R = {det.responsivity(wl):.3f} A/W")
+            lines.append(f"({det.ref_factor_v_per_mw:g} V/mW at {det.ref_wavelength_nm:g} nm, scaled by responsivity)")
+            if not det.in_curve_range(wl):
+                lo, hi = det.curve[0][0], det.curve[-1][0]
+                lines.append(f"Note: outside curve range {lo:g}-{hi:g} nm, using the end value")
+        else:
+            lines.append("Source: fixed factor, no responsivity curve")
         if self.calibration_path is not None:
-            lines.append(f"Calibration file: {self.calibration_path}")
-        self.lbl_conversion.config(text="\n".join(lines), fg="#aa5500" if warn else "black")
+            lines.append(f"File: {self.calibration_path}")
+        return "\n".join(lines)
+
+    def _refresh_conversion_display(self) -> None:
+        if any(d.is_calibrated for d in self.detectors.values()):
+            src = self.calibration_path.name if self.calibration_path is not None else "unsaved points"
+            self.lbl_cal_source.config(text=f"Using calibration: {src}")
+        else:
+            self.lbl_cal_source.config(text="Using Thorlabs responsivity curves")
         if self.last_voltages is not None:
             self._show_readings(*self.last_voltages)
 
@@ -599,13 +614,13 @@ class CalibrationWindow:
         self.var_detector = tk.StringVar(value=DETECTOR_NAMES[0])
         for i, name in enumerate(DETECTOR_NAMES):
             tk.Radiobutton(
-                frm, text=name, variable=self.var_detector, value=name, command=self.refresh
+                frm, text=name, variable=self.var_detector, value=name, command=self._on_detector_change
             ).grid(row=0, column=1 + i, sticky="w")
 
         tk.Label(frm, text="Wavelength (nm):").grid(row=1, column=0, sticky="e")
         self.ent_wl = tk.Entry(frm, width=10)
         self.ent_wl.grid(row=1, column=1, sticky="w", padx=3, pady=2)
-        self.ent_wl.insert(0, f"{app.wavelength_nm:g}")
+        self.ent_wl.insert(0, f"{app.wavelengths[DETECTOR_NAMES[0]]:g}")
 
         tk.Label(frm, text="Known power (mW):").grid(row=2, column=0, sticky="e")
         self.ent_power = tk.Entry(frm, width=10)
@@ -639,6 +654,11 @@ class CalibrationWindow:
         self.lbl_fit = tk.Label(self.win, text="", justify="left", font=("Courier", 9))
         self.lbl_fit.pack(fill="x", padx=10, pady=5)
 
+        self.refresh()
+
+    def _on_detector_change(self) -> None:
+        self.ent_wl.delete(0, tk.END)
+        self.ent_wl.insert(0, f"{self.app.wavelengths[self.var_detector.get()]:g}")
         self.refresh()
 
     def _detector(self) -> DetectorCalibration:
