@@ -25,6 +25,8 @@ from qt3utils.applications.qt3power.calibration import (
     load_calibrations,
     MIN_PATH_TRANSMISSION,
     load_last_wavelengths,
+    load_last_gains,
+    GAIN_OPTIONS_DB,
     load_settings,
     save_calibrations,
     save_last_wavelengths,
@@ -93,6 +95,10 @@ _STALE_LOCK_TOOLTIP = (
     "While reads continue through a sweep, the PDA50B2 wavelength box is not updated, "
     "so its power is converted at the pre-sweep wavelength."
 )
+
+
+def _gain_text(gain_db: Optional[int]) -> str:
+    return "" if gain_db is None else f"{gain_db} dB"
 
 
 def _attach_tooltip(widget: tk.Widget, text: Union[str, Callable[[], str]]) -> None:
@@ -222,7 +228,8 @@ class PowerMonitorApp:
     By default k = 7.0 V/mW (0.7 V -> 0.1 mW) at a reference wavelength
     (1550 nm PDA50B2, 980 nm PDA100A2), scaled by the
     detector's responsivity curve at other wavelengths. A measured calibration,
-    if loaded, overrides the default. Assumes the detector gain is never changed.
+    if loaded, overrides the default. The gain dropdowns record each detector's gain
+    switch (saved with calibration points); they do not change the conversion.
     """
 
     def __init__(self, root: tk.Tk) -> None:
@@ -237,6 +244,12 @@ class PowerMonitorApp:
 
         self.wavelengths: Dict[str, float] = load_last_wavelengths()
         self.wavelength_entries: Dict[str, tk.Entry] = {}
+        saved_gains = load_last_gains()
+        self.gain_vars: Dict[str, tk.StringVar] = {
+            name: tk.StringVar(value=_gain_text(saved_gains.get(name))) for name in DETECTOR_NAMES
+        }
+        for name, var in self.gain_vars.items():
+            var.trace_add("write", lambda *_a: self._save_gains())
         saved_lw = load_settings().get("linewidth_nm", {})
         self.linewidths: Dict[str, float] = {
             name: float(saved_lw.get(name, 0.0))
@@ -290,19 +303,21 @@ class PowerMonitorApp:
         daq_row = tk.Frame(cfg_frame)
         daq_row.grid(row=0, column=0, sticky="w")
         tk.Label(daq_row, text="DAQ Device:").pack(side="left")
-        self.ent_device = tk.Entry(daq_row, width=8)
+        self.ent_device = tk.Entry(daq_row, width=5)
         self.ent_device.pack(side="left", padx=(2, 10))
         self.ent_device.insert(0, "Dev1")
 
-        tk.Label(daq_row, text="PDA50B2 Ch:").pack(side="left")
-        self.ent_ch1 = tk.Entry(daq_row, width=6)
-        self.ent_ch1.pack(side="left", padx=(2, 10))
-        self.ent_ch1.insert(0, "ai2")
-
-        tk.Label(daq_row, text="PDA100A2 Ch:").pack(side="left")
-        self.ent_ch2 = tk.Entry(daq_row, width=6)
-        self.ent_ch2.pack(side="left", padx=(2, 10))
-        self.ent_ch2.insert(0, "ai0")
+        channel_entries = {}
+        for name, default_ch in zip(DETECTOR_NAMES, ("ai2", "ai0")):
+            tk.Label(daq_row, text=f"{name} Ch:").pack(side="left")
+            ent = tk.Entry(daq_row, width=4)
+            ent.pack(side="left", padx=(2, 4))
+            ent.insert(0, default_ch)
+            channel_entries[name] = ent
+            tk.Label(daq_row, text="Gain:").pack(side="left")
+            self._gain_box(daq_row, name).pack(side="left", padx=(2, 10))
+        self.ent_ch1 = channel_entries["PDA50B2"]
+        self.ent_ch2 = channel_entries["PDA100A2"]
 
         self.btn_init = tk.Button(
             daq_row,
@@ -461,7 +476,7 @@ class PowerMonitorApp:
             # If we get here, DAQ is working; keep a controller instance.
             self.detector_ctrl = test_ctrl
             self.lbl_status.config(
-                text=f"DAQ: Initialized ({device}, {ch1}, {ch2})",
+                text="DAQ: Initialized",
                 fg="green",
             )
             self._show_readings(v1, v2)
@@ -534,6 +549,23 @@ class PowerMonitorApp:
         self.large_readings[key] = not self.large_readings[key]
         self._apply_reading_size(key)
         update_settings({"large_readings": self.large_readings})
+
+    # ---- Detector gain (recorded with calibration points) ----
+
+    def _gain_box(self, parent: tk.Widget, name: str) -> ttk.Combobox:
+        box = ttk.Combobox(
+            parent, textvariable=self.gain_vars[name], state="readonly", width=6,
+            values=[_gain_text(g) for g in GAIN_OPTIONS_DB[name]],
+        )
+        _attach_tooltip(box, f"Position of the {name} gain switch. Saved with calibration points.")
+        return box
+
+    def gain_db(self, name: str) -> Optional[int]:
+        text = self.gain_vars[name].get().replace("dB", "").strip()
+        return int(text) if text else None
+
+    def _save_gains(self) -> None:
+        update_settings({"gain_db": {name: self.gain_db(name) for name in DETECTOR_NAMES}})
 
     # ---- Wavelength / calibration ----
 
@@ -1112,6 +1144,12 @@ class CalibrationWindow:
         self.ent_lw.grid(row=1, column=3, sticky="w", padx=3)
         self._update_linewidth_field()
 
+        tk.Label(frm, text="Gain:").grid(row=0, column=3, sticky="e", padx=(10, 0))
+        self.gain_frame = tk.Frame(frm)
+        self.gain_frame.grid(row=0, column=4, sticky="w", padx=3)
+        self.gain_box: Optional[ttk.Combobox] = None
+        self._update_gain_field()
+
         tk.Label(frm, text="Power at objective (mW):").grid(row=2, column=0, sticky="e")
         self.ent_power = tk.Entry(frm, width=10)
         self.ent_power.grid(row=2, column=1, sticky="w", padx=3, pady=2)
@@ -1128,10 +1166,12 @@ class CalibrationWindow:
             row=4, column=2, columnspan=2, sticky="w", padx=3, pady=5
         )
 
-        cols = ("wl", "power", "voltage", "k", "path")
+        cols = ("wl", "power", "voltage", "k", "gain", "path")
         self.tree = ttk.Treeview(self.win, columns=cols, show="headings", height=8)
         for c, title, w in zip(
-            cols, ("Wavelength (nm)", "Power (mW)", "Voltage (V)", "V/mW", "Optics"), (110, 90, 90, 80, 160)
+            cols,
+            ("Wavelength (nm)", "Power (mW)", "Voltage (V)", "V/mW", "Gain", "Optics"),
+            (110, 90, 90, 80, 60, 160),
         ):
             self.tree.heading(c, text=title)
             self.tree.column(c, width=w, anchor="center")
@@ -1150,10 +1190,18 @@ class CalibrationWindow:
         if name not in LINEWIDTH_DETECTORS:
             self.ent_lw.config(state="disabled")
 
+    def _update_gain_field(self) -> None:
+        # Shares the main window's gain variable, so both always show the same (last used) gain.
+        if self.gain_box is not None:
+            self.gain_box.destroy()
+        self.gain_box = self.app._gain_box(self.gain_frame, self.var_detector.get())
+        self.gain_box.pack()
+
     def _on_detector_change(self) -> None:
         self.ent_wl.delete(0, tk.END)
         self.ent_wl.insert(0, f"{self.app.wavelengths[self.var_detector.get()]:g}")
         self._update_linewidth_field()
+        self._update_gain_field()
         self.refresh()
 
     def _detector(self) -> DetectorCalibration:
@@ -1190,6 +1238,10 @@ class CalibrationWindow:
             messagebox.showerror("Add Point", f"Check wavelength, power and voltage: {e}", parent=self.win)
             return
         name = self.var_detector.get()
+        gain = self.app.gain_db(name)
+        if gain is None:
+            messagebox.showerror("Add Point", f"Set the {name} gain first.", parent=self.win)
+            return
         path = dict(self.app.path_model.installed)
         t_path = self.app.path_model.transmission(name, wl, path, linewidth)
         if t_path < MIN_PATH_TRANSMISSION:
@@ -1200,7 +1252,7 @@ class CalibrationWindow:
                 parent=self.win,
             )
             return
-        self._detector().points.append(CalibrationPoint(wl, power, voltage, path, linewidth))
+        self._detector().points.append(CalibrationPoint(wl, power, voltage, path, linewidth, gain))
         self.app.calibration_dirty = True
         self.ent_power.delete(0, tk.END)
         self.ent_voltage.delete(0, tk.END)
@@ -1225,6 +1277,7 @@ class CalibrationWindow:
                 values=(
                     f"{p.wavelength_nm:g}" + (f" (w {p.linewidth_nm:g})" if p.linewidth_nm else ""),
                     f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}",
+                    _gain_text(p.gain_db) or "?",
                     self.app.path_model.label(p.path) if p.path else "(not recorded)",
                 ),
             )

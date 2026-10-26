@@ -121,6 +121,12 @@ def band_wavelengths(center_nm: float, linewidth_nm: float) -> np.ndarray:
 # a near-zero transmission would blow up any error in the curve.
 MIN_PATH_TRANSMISSION = 0.01
 
+# Gain switch positions on the Thorlabs PDA50B2 and PDA100A2 (8 positions, 10 dB steps).
+GAIN_OPTIONS_DB: Dict[str, Tuple[int, ...]] = {
+    "PDA50B2": tuple(range(0, 80, 10)),
+    "PDA100A2": tuple(range(0, 80, 10)),
+}
+
 
 @dataclass
 class CalibrationPoint:
@@ -129,6 +135,7 @@ class CalibrationPoint:
     voltage_v: float
     path: Dict[str, str] = field(default_factory=dict)  # slot -> optic installed when measured
     linewidth_nm: float = 0.0  # source linewidth when measured (0 = narrow line)
+    gain_db: Optional[int] = None  # detector gain switch when measured (None = not recorded)
 
 
 def _unity_transmission(_point: "CalibrationPoint") -> float:
@@ -271,6 +278,7 @@ class DetectorCalibration:
                     voltage_v=float(p["voltage_v"]),
                     path=dict(p.get("path", {})),
                     linewidth_nm=float(p.get("linewidth_nm", 0.0)),
+                    gain_db=None if p.get("gain_db") is None else int(p["gain_db"]),
                 )
                 for p in d.get("points", [])
             ],
@@ -415,6 +423,17 @@ def load_last_wavelengths(path: Path = SETTINGS_PATH) -> Dict[str, float]:
             except (TypeError, ValueError):
                 pass
     return wavelengths
+
+
+def load_last_gains(path: Path = SETTINGS_PATH) -> Dict[str, Optional[int]]:
+    """Last gain (dB) set for each detector; None if never set."""
+    saved = load_settings(path).get("gain_db", {})
+    gains: Dict[str, Optional[int]] = {name: None for name in GAIN_OPTIONS_DB}
+    if isinstance(saved, dict):
+        for name, g in saved.items():
+            if name in gains and g in GAIN_OPTIONS_DB[name]:
+                gains[name] = int(g)
+    return gains
 
 
 def save_last_wavelengths(wavelengths: Dict[str, float], path: Path = SETTINGS_PATH) -> None:
