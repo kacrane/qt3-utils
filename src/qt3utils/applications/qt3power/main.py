@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -29,9 +30,10 @@ from qt3utils.applications.qt3power.calibration import (
     save_last_wavelengths,
     update_settings,
 )
+from qt3utils.applications.qt3power.santec import laser_config as santec_laser_config
+from qt3utils.applications.qt3power.santec import read_santec_wavelength
 from qt3utils.applications.qt3power.superk import (
     DEFAULT_CONNECTION as SUPERK_DEFAULT_CONNECTION,
-    SuperKSettings,
     read_superk_settings,
 )
 from qt3utils.applications.qt3power.paths import (
@@ -52,9 +54,10 @@ DEFAULT_BURST_RATE_HZ = 9973.0
 # Detector output limit (V, high-impedance load; halve for 50 ohm). A burst whose
 # largest sample reaches SATURATION_FRACTION of this, or of the DAQ range, is
 # flagged: the average is then not linear in power.
-# The SuperK CHROMATUNE is read by this detector; "Read SuperK" fills its boxes.
-SUPERK_DETECTOR = "PDA100A2"
-SUPERK_AUTO_INTERVAL_MS = 5000
+# Laser read by each detector; its "Read ..." button fills that detector's boxes.
+SUPERK_DETECTOR = "PDA100A2"  # NKT SuperK CHROMATUNE
+SANTEC_DETECTOR = "PDA50B2"  # Santec TSL lasers via qt3santec's switch
+SOURCE_AUTO_INTERVAL_MS = 5000
 
 DETECTOR_MAX_OUTPUT_V = {"PDA50B2": 10.0, "PDA100A2": 10.0}
 SATURATION_FRACTION = 0.95
@@ -226,8 +229,7 @@ class PowerMonitorApp:
         self.superk_connection = dict(SUPERK_DEFAULT_CONNECTION)
         if isinstance(saved_superk, dict):
             self.superk_connection.update(saved_superk)
-        self.superk_busy = False
-        self.var_superk_auto = tk.BooleanVar(value=False)
+        self.source_controls: Dict[str, "LaserSourceControls"] = {}
         self.detectors: Dict[str, DetectorCalibration] = {
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
@@ -350,6 +352,10 @@ class PowerMonitorApp:
         )
         self.lbl_pda50b2_power.grid(row=0, column=1, sticky="w", padx=5, pady=5)
         self._build_wavelength_entry(display_frame, "PDA50B2", row=0)
+        self.source_controls[SANTEC_DETECTOR] = LaserSourceControls(
+            self, display_frame, row=0, detector=SANTEC_DETECTOR, title="Santec",
+            prepare=self._prepare_santec_read, read=self._read_santec,
+        )
 
         tk.Label(display_frame, text="Voltage (V):").grid(
             row=1,
@@ -379,7 +385,11 @@ class PowerMonitorApp:
         )
         self.lbl_pda100a2_power.grid(row=2, column=1, sticky="w", padx=5, pady=10)
         self._build_wavelength_entry(display_frame, "PDA100A2", row=2)
-        self._build_superk_controls(display_frame, row=2)
+        self.source_controls[SUPERK_DETECTOR] = LaserSourceControls(
+            self, display_frame, row=2, detector=SUPERK_DETECTOR, title="SuperK",
+            prepare=lambda: dict(self.superk_connection), read=self._read_superk,
+            open_settings=self.open_superk_settings,
+        )
 
         tk.Label(display_frame, text="Voltage (V):").grid(
             row=3,
@@ -560,84 +570,48 @@ class PowerMonitorApp:
         self.linewidth_entries[name] = lw
         _attach_tooltip(lw, "Source spectral width (flat top). 0 for a narrow line.")
 
-    # ---- SuperK CHROMATUNE (read-only) ----
+    # ---- Laser sources (read-only) ----
+    # prepare() runs on the main thread and returns the argument for read(), which
+    # runs in a background thread (no Tk calls) and returns a SourceReading.
 
-    def _build_superk_controls(self, parent: tk.Widget, row: int) -> None:
-        frm = tk.Frame(parent)
-        frm.grid(row=row, column=4, rowspan=2, sticky="nw", padx=5)
-        top = tk.Frame(frm)
-        top.pack(anchor="w")
-        tk.Button(top, text="Read SuperK", command=lambda: self.read_superk(manual=True)).pack(side="left")
-        tk.Button(top, text="...", width=2, command=self.open_superk_settings).pack(side="left", padx=2)
-        tk.Checkbutton(
-            frm, text="Auto", variable=self.var_superk_auto, command=self._on_superk_auto_toggle
-        ).pack(anchor="w")
-        self.lbl_superk = tk.Label(frm, text="", fg="#555555", font=("Arial", 8), justify="left")
-        self.lbl_superk.pack(anchor="w")
+    @staticmethod
+    def _read_superk(conn: dict) -> "SourceReading":
+        r = read_superk_settings(conn)
+        rep = f"{r.rep_rate_mhz:.3g} MHz" if r.rep_rate_mhz else "rep rate n/a"
+        emission = {True: "on", False: "off", None: "?"}[r.emission_on]
+        return SourceReading(
+            wavelength_nm=r.center_nm,
+            linewidth_nm=r.bandwidth_nm,
+            status=f"{rep}, emission {emission}",
+            detail=f"SuperK (last read): {r.center_nm:g} nm, {r.bandwidth_nm:g} nm wide, rep {rep}",
+        )
 
-    def read_superk(self, manual: bool = False) -> None:
-        """Read center/bandwidth/rep rate in a background thread, then fill the PDA100A2 boxes."""
-        if self.superk_busy:
-            return
-        self.superk_busy = True
-        self.lbl_superk.config(text="Reading...")
-        conn = dict(self.superk_connection)
-        outcome: Dict[str, object] = {}
+    def _prepare_santec_read(self) -> list:
+        if santec_daq_busy() and not self.var_ignore_santec_lock.get():
+            raise RuntimeError("qt3santec is sweeping; the wavelength is changing. Try again after the sweep.")
+        return santec_laser_config()
 
-        def worker() -> None:
-            # No Tk calls here: Tk is not thread safe. The main thread polls outcome.
-            try:
-                outcome["result"] = read_superk_settings(conn)
-            except Exception as e:
-                outcome["error"] = e
+    @staticmethod
+    def _read_santec(configs: list) -> "SourceReading":
+        r = read_santec_wavelength(configs)
+        sweeping = ", SWEEPING" if r.sweeping else ""
+        return SourceReading(
+            wavelength_nm=r.wavelength_nm,
+            linewidth_nm=0.0,  # tunable CW laser: narrow line
+            status=f"{r.ip}{sweeping}",
+            detail=f"Santec (last read): {r.wavelength_nm:g} nm from {r.ip}{sweeping}",
+        )
 
-        thread = threading.Thread(target=worker, daemon=True)
-        thread.start()
-
-        def poll() -> None:
-            if thread.is_alive():
-                self.root.after(50, poll)
-                return
-            self.superk_busy = False
-            if "result" in outcome:
-                self._apply_superk(outcome["result"])
-            else:
-                self._superk_failed(outcome.get("error", RuntimeError("unknown error")), manual)
-
-        self.root.after(50, poll)
-
-    def _apply_superk(self, result: SuperKSettings) -> None:
-        name = SUPERK_DETECTOR
+    def apply_source_reading(self, name: str, reading: "SourceReading") -> None:
         for entry, value, setter in (
-            (self.wavelength_entries[name], result.center_nm, self.set_wavelength),
-            (self.linewidth_entries[name], result.bandwidth_nm, self.set_linewidth),
+            (self.wavelength_entries[name], reading.wavelength_nm, self.set_wavelength),
+            (self.linewidth_entries[name], reading.linewidth_nm, self.set_linewidth),
         ):
+            if value is None:
+                continue
             entry.delete(0, tk.END)
             entry.insert(0, f"{value:g}")
             setter(name)
-        rep = f"{result.rep_rate_mhz:.3g} MHz" if result.rep_rate_mhz else "rep rate n/a"
-        emission = {True: "on", False: "off", None: "?"}[result.emission_on]
-        self.superk_last = result
-        self.lbl_superk.config(text=f"{rep}, emission {emission}\nread {time.strftime('%H:%M:%S')}")
-
-    def _superk_failed(self, error: Exception, manual: bool) -> None:
-        self.lbl_superk.config(text=f"Read failed {time.strftime('%H:%M:%S')}")
-        if manual:
-            messagebox.showerror("Read SuperK", str(error))
-        elif self.var_superk_auto.get():
-            # Don't keep hammering a busy or unreachable link with popups; stop auto.
-            self.var_superk_auto.set(False)
-            messagebox.showwarning("Read SuperK", f"{error}\n\nAuto read turned off.")
-
-    def _on_superk_auto_toggle(self) -> None:
-        if self.var_superk_auto.get():
-            self._superk_auto_tick()
-
-    def _superk_auto_tick(self) -> None:
-        if not self.var_superk_auto.get():
-            return
-        self.read_superk(manual=False)
-        self.root.after(SUPERK_AUTO_INTERVAL_MS, self._superk_auto_tick)
 
     def open_superk_settings(self) -> None:
         win = tk.Toplevel(self.root)
@@ -764,12 +738,9 @@ class PowerMonitorApp:
             lines.append("Source: fixed factor, no responsivity curve")
         if self.calibration_path is not None:
             lines.append(f"File: {self.calibration_path}")
-        superk_last = getattr(self, "superk_last", None)
-        if name == SUPERK_DETECTOR and superk_last is not None:
-            rep = f"{superk_last.rep_rate_mhz:.3g} MHz" if superk_last.rep_rate_mhz else "n/a"
-            lines.append(
-                f"SuperK (last read): {superk_last.center_nm:g} nm, {superk_last.bandwidth_nm:g} nm wide, rep {rep}"
-            )
+        source = self.source_controls.get(name)
+        if source is not None and source.last is not None:
+            lines.append(source.last.detail)
         if self.detector_ctrl is not None:
             ctrl = self.detector_ctrl
             peak = ctrl.last_peaks[DETECTOR_NAMES.index(name)]
@@ -1001,9 +972,108 @@ class PowerMonitorApp:
             if answer and not self.save_calibration_dialog():
                 return
         self.running = False
-        self.var_superk_auto.set(False)
+        for source in self.source_controls.values():
+            source.var_auto.set(False)
         # No persistent DAQ task is kept open in this minimal app, so nothing to close.
         self.root.destroy()
+
+
+@dataclass
+class SourceReading:
+    wavelength_nm: float
+    linewidth_nm: Optional[float]  # None leaves the linewidth box alone
+    status: str  # short text under the button
+    detail: str  # line for the power tooltip
+
+
+class LaserSourceControls:
+    """'Read <laser>' button, '...' settings, Auto checkbox and status line for one detector."""
+
+    def __init__(
+        self,
+        app: "PowerMonitorApp",
+        parent: tk.Widget,
+        row: int,
+        detector: str,
+        title: str,
+        prepare: Callable[[], object],
+        read: Callable[[object], SourceReading],
+        open_settings: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self.app = app
+        self.detector = detector
+        self.title = title
+        self.prepare = prepare
+        self.read_fn = read
+        self.busy = False
+        self.last: Optional[SourceReading] = None
+        self.var_auto = tk.BooleanVar(value=False)
+
+        frm = tk.Frame(parent)
+        frm.grid(row=row, column=4, rowspan=2, sticky="nw", padx=5)
+        top = tk.Frame(frm)
+        top.pack(anchor="w")
+        tk.Button(top, text=f"Read {title}", command=lambda: self.read(manual=True)).pack(side="left")
+        if open_settings is not None:
+            tk.Button(top, text="...", width=2, command=open_settings).pack(side="left", padx=2)
+        tk.Checkbutton(frm, text="Auto", variable=self.var_auto, command=self._on_auto_toggle).pack(anchor="w")
+        self.lbl = tk.Label(frm, text="", fg="#555555", font=("Arial", 8), justify="left")
+        self.lbl.pack(anchor="w")
+
+    def read(self, manual: bool = False) -> None:
+        if self.busy:
+            return
+        try:
+            arg = self.prepare()
+        except Exception as e:
+            self._failed(e, manual)
+            return
+        self.busy = True
+        self.lbl.config(text="Reading...")
+        outcome: Dict[str, object] = {}
+
+        def worker() -> None:
+            # No Tk calls here: Tk is not thread safe. The main thread polls outcome.
+            try:
+                outcome["result"] = self.read_fn(arg)
+            except Exception as e:
+                outcome["error"] = e
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        def poll() -> None:
+            if thread.is_alive():
+                self.app.root.after(50, poll)
+                return
+            self.busy = False
+            if "result" in outcome:
+                self.last = outcome["result"]
+                self.app.apply_source_reading(self.detector, self.last)
+                self.lbl.config(text=f"{self.last.status}\nread {time.strftime('%H:%M:%S')}")
+            else:
+                self._failed(outcome.get("error", RuntimeError("unknown error")), manual)
+
+        self.app.root.after(50, poll)
+
+    def _failed(self, error: Exception, manual: bool) -> None:
+        self.lbl.config(text=f"Read failed {time.strftime('%H:%M:%S')}")
+        if manual:
+            messagebox.showerror(f"Read {self.title}", str(error))
+        elif self.var_auto.get():
+            # Don't keep hammering a busy or unreachable link with popups; stop auto.
+            self.var_auto.set(False)
+            messagebox.showwarning(f"Read {self.title}", f"{error}\n\nAuto read turned off.")
+
+    def _on_auto_toggle(self) -> None:
+        if self.var_auto.get():
+            self._auto_tick()
+
+    def _auto_tick(self) -> None:
+        if not self.var_auto.get():
+            return
+        self.read(manual=False)
+        self.app.root.after(SOURCE_AUTO_INTERVAL_MS, self._auto_tick)
 
 
 class CalibrationWindow:
