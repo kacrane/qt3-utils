@@ -650,6 +650,8 @@ class PowerMonitorApp:
             entry.delete(0, tk.END)
             entry.insert(0, f"{value:g}")
             setter(name)
+        if self.calibration_window is not None:
+            self.calibration_window.refresh()
 
     def open_superk_settings(self) -> None:
         win = tk.Toplevel(self.root)
@@ -1140,148 +1142,261 @@ class LaserSourceControls:
 
 class CalibrationWindow:
     """
-    Record (wavelength, known power, detector voltage) points.
+    Calibrate one detector against a reference power meter at the objective.
 
-    Workflow: set the laser wavelength, measure its power AT THE OBJECTIVE with a
-    reference power meter, type that power in, press "Read DAQ" to average the
-    detector voltage, then "Add Point". Each point records the optics installed
-    in the main window, so later optics swaps rescale it. Repeat at several powers and wavelengths. Points take effect
-    in the main window immediately; use Save Cal... to keep them.
+    1. Setup, once per series: pick the detector; turn the other laser off (the meter
+       sees both beams); confirm the dichroic (from the main window) and gain; block
+       the beam and measure the dark offset.
+    2. Points: set the wavelength and the meter to it; change only the laser power
+       (3-5 levels), typing the meter reading and pressing "Read DAQ + Add". Then
+       change the wavelength and repeat.
+
+    Each point records the dichroic and gain; the dark reading is stored as a 0 mW
+    point at each wavelength so every fit has an offset. Points take effect in the
+    main window immediately; Save keeps them in this detector's own file.
     """
+
+    OTHER_LASER = {SANTEC_DETECTOR: "SuperK", SUPERK_DETECTOR: "Santec"}
+    OWN_LASER = {SANTEC_DETECTOR: "Santec", SUPERK_DETECTOR: "SuperK"}
 
     def __init__(self, app: PowerMonitorApp) -> None:
         self.app = app
         self.win = tk.Toplevel(app.root)
         self.win.title("qt3power Calibration")
         self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.dark_v: Dict[str, Optional[float]] = {name: None for name in DETECTOR_NAMES}
 
-        self.lbl_path = tk.Label(self.win, text="", justify="left", anchor="w")
-        self.lbl_path.pack(fill="x", padx=10, pady=(8, 0))
+        # ---- 1. Setup ----
+        setup = tk.LabelFrame(self.win, text="1. Setup (once per series)", font=("Arial", 10, "bold"))
+        setup.pack(fill="x", padx=10, pady=(8, 4))
 
-        frm = tk.Frame(self.win)
-        frm.pack(fill="x", padx=10, pady=5)
-
-        tk.Label(frm, text="Detector:").grid(row=0, column=0, sticky="e")
+        top = tk.Frame(setup)
+        top.grid(row=0, column=0, columnspan=3, sticky="w", pady=(2, 4))
+        tk.Label(top, text="Detector:").pack(side="left")
         self.var_detector = tk.StringVar(value=DETECTOR_NAMES[0])
-        for i, name in enumerate(DETECTOR_NAMES):
+        for name in DETECTOR_NAMES:
             tk.Radiobutton(
-                frm, text=name, variable=self.var_detector, value=name, command=self._on_detector_change
-            ).grid(row=0, column=1 + i, sticky="w")
+                top, text=f"{name} ({self.OWN_LASER[name]})", variable=self.var_detector, value=name,
+                command=self._on_detector_change,
+            ).pack(side="left", padx=4)
 
-        tk.Label(frm, text="Wavelength (nm):").grid(row=1, column=0, sticky="e")
-        self.ent_wl = tk.Entry(frm, width=10)
-        self.ent_wl.grid(row=1, column=1, sticky="w", padx=3, pady=2)
-        self.ent_wl.insert(0, f"{app.wavelengths[DETECTOR_NAMES[0]]:g}")
-        tk.Label(frm, text="Linewidth (nm):").grid(row=1, column=2, sticky="e")
-        self.ent_lw = tk.Entry(frm, width=6)
-        self.ent_lw.grid(row=1, column=3, sticky="w", padx=3)
-        self._update_linewidth_field()
+        self.checks: Dict[str, tk.BooleanVar] = {}
 
-        tk.Label(frm, text="Gain:").grid(row=0, column=3, sticky="e", padx=(10, 0))
+        def check_row(row: int, key: str) -> tk.Frame:
+            var = tk.BooleanVar(value=False)
+            var.trace_add("write", lambda *_a: self._update_points_state())
+            self.checks[key] = var
+            tk.Checkbutton(setup, variable=var).grid(row=row, column=0, sticky="nw")
+            frm = tk.Frame(setup)
+            frm.grid(row=row, column=1, sticky="w", pady=1)
+            return frm
+
+        frm = check_row(1, "other")
+        self.lbl_other = tk.Label(frm, text="")
+        self.lbl_other.pack(side="left")
+
+        frm = check_row(2, "dichroic")
+        self.lbl_dichroic = tk.Label(frm, text="")
+        self.lbl_dichroic.pack(side="left")
+
+        frm = check_row(3, "gain")
+        tk.Label(frm, text="Gain switch on the detector is at").pack(side="left")
         self.gain_frame = tk.Frame(frm)
-        self.gain_frame.grid(row=0, column=4, sticky="w", padx=3)
+        self.gain_frame.pack(side="left", padx=4)
         self.gain_box: Optional[ttk.Combobox] = None
-        self._update_gain_field()
 
-        tk.Label(frm, text="Power at objective (mW):").grid(row=2, column=0, sticky="e")
-        self.ent_power = tk.Entry(frm, width=10)
-        self.ent_power.grid(row=2, column=1, sticky="w", padx=3, pady=2)
+        frm = check_row(4, "dark")
+        tk.Label(frm, text="Beam blocked, meter zeroed:").pack(side="left")
+        tk.Button(frm, text="Measure Dark", command=self.measure_dark).pack(side="left", padx=4)
+        self.lbl_dark = tk.Label(frm, text="not measured")
+        self.lbl_dark.pack(side="left", padx=4)
 
-        tk.Label(frm, text="Voltage (V):").grid(row=3, column=0, sticky="e")
-        self.ent_voltage = tk.Entry(frm, width=10)
-        self.ent_voltage.grid(row=3, column=1, sticky="w", padx=3, pady=2)
-        tk.Button(frm, text="Read DAQ", command=self.read_daq).grid(row=3, column=2, padx=3)
+        # ---- 2. Points ----
+        self.points_frame = tk.LabelFrame(self.win, text="2. Points", font=("Arial", 10, "bold"))
+        self.points_frame.pack(fill="both", expand=True, padx=10, pady=4)
+        self.lbl_points_hint = tk.Label(self.points_frame, text="", fg="#555555", justify="left", anchor="w")
+        self.lbl_points_hint.pack(fill="x", padx=4)
 
-        tk.Button(frm, text="Add Point", command=self.add_point, bg="#ccffcc").grid(
-            row=4, column=1, sticky="w", padx=3, pady=5
-        )
-        tk.Button(frm, text="Delete Selected", command=self.delete_selected).grid(
-            row=4, column=2, columnspan=2, sticky="w", padx=3, pady=5
-        )
+        # Wavelength: set for each group of points, so it lives here rather than in Setup.
+        wl_row = tk.Frame(self.points_frame)
+        wl_row.pack(fill="x", padx=4, pady=(4, 0))
+        tk.Label(wl_row, text="Wavelength (nm):").pack(side="left")
+        self.ent_wl = tk.Entry(wl_row, width=8)
+        self.ent_wl.pack(side="left", padx=(2, 8))
+        self.ent_wl.bind("<Return>", lambda _e: self._set_wavelength())
+        self.ent_wl.bind("<FocusOut>", lambda _e: self._set_wavelength())
+        self.lw_frame = tk.Frame(wl_row)  # shown only for detectors with a linewidth
+        tk.Label(self.lw_frame, text="Linewidth (nm):").pack(side="left")
+        self.ent_lw = tk.Entry(self.lw_frame, width=6)
+        self.ent_lw.pack(side="left", padx=(2, 8))
+        self.ent_lw.bind("<Return>", lambda _e: self._set_linewidth())
+        self.ent_lw.bind("<FocusOut>", lambda _e: self._set_linewidth())
+        self.btn_read_laser = tk.Button(wl_row, text="Read", command=self._read_laser)
+        self.btn_read_laser.pack(side="left")
+        # Cleared whenever the wavelength changes, so the meter is re-set for every wavelength.
+        self.var_meter_wl = tk.BooleanVar(value=False)
+        self.var_meter_wl.trace_add("write", lambda *_a: self._update_points_state())
+        self._meter_wl: Optional[float] = None
+        tk.Checkbutton(
+            wl_row, text="Power meter is set to this wavelength", variable=self.var_meter_wl
+        ).pack(side="left", padx=10)
 
-        cols = ("wl", "power", "voltage", "k", "gain", "path")
-        self.tree = ttk.Treeview(self.win, columns=cols, show="headings", height=8)
+        add = tk.Frame(self.points_frame)
+        add.pack(fill="x", padx=4, pady=4)
+        tk.Label(add, text="Power at objective (mW):").pack(side="left")
+        self.ent_power = tk.Entry(add, width=10)
+        self.ent_power.pack(side="left", padx=4)
+        self.ent_power.bind("<Return>", lambda _e: self.add_point())
+        self.btn_add = tk.Button(add, text="Read DAQ + Add", command=self.add_point, bg="#ccffcc")
+        self.btn_add.pack(side="left", padx=4)
+        self.btn_delete = tk.Button(add, text="Delete Selected", command=self.delete_selected)
+        self.btn_delete.pack(side="left", padx=4)
+        self.lbl_last = tk.Label(add, text="", fg="#555555")
+        self.lbl_last.pack(side="left", padx=8)
+
+        cols = ("power", "voltage", "k", "gain", "optics")
+        self.tree = ttk.Treeview(self.points_frame, columns=cols, show="tree headings", height=9)
+        self.tree.heading("#0", text="Wavelength / fit")
+        self.tree.column("#0", width=330, anchor="w")
         for c, title, w in zip(
-            cols,
-            ("Wavelength (nm)", "Power (mW)", "Voltage (V)", "V/mW", "Gain", "Optics"),
-            (110, 90, 90, 80, 60, 160),
+            cols, ("Power (mW)", "Voltage (V)", "Slope (V/mW)", "Gain", "Dichroic"), (85, 85, 110, 55, 85)
         ):
             self.tree.heading(c, text=title)
             self.tree.column(c, width=w, anchor="center")
-        self.tree.pack(fill="both", expand=True, padx=10, pady=5)
+        self.tree.pack(fill="both", expand=True, padx=4, pady=4)
 
-        self.lbl_fit = tk.Label(self.win, text="", justify="left", font=("Courier", 9))
-        self.lbl_fit.pack(fill="x", padx=10, pady=5)
+        bottom = tk.Frame(self.win)
+        bottom.pack(fill="x", padx=10, pady=(0, 8))
+        self.btn_save = tk.Button(bottom, text="Save", command=self._save)
+        self.btn_save.pack(side="right")
+        self.lbl_status = tk.Label(bottom, text="", anchor="w")
+        self.lbl_status.pack(side="left")
 
-        self.refresh()
+        self._on_detector_change()
 
-    def _update_linewidth_field(self) -> None:
-        name = self.var_detector.get()
-        self.ent_lw.config(state="normal")
-        self.ent_lw.delete(0, tk.END)
-        self.ent_lw.insert(0, f"{self.app.linewidths[name]:g}")
-        if name not in LINEWIDTH_DETECTORS:
-            self.ent_lw.config(state="disabled")
+    # ---- setup ----
 
-    def _update_gain_field(self) -> None:
-        # Shares the main window's gain variable, so both always show the same (last used) gain.
-        if self.gain_box is not None:
-            self.gain_box.destroy()
-        self.gain_box = self.app._gain_box(self.gain_frame, self.var_detector.get())
-        self.gain_box.pack()
-
-    def _on_detector_change(self) -> None:
-        self.ent_wl.delete(0, tk.END)
-        self.ent_wl.insert(0, f"{self.app.wavelengths[self.var_detector.get()]:g}")
-        self._update_linewidth_field()
-        self._update_gain_field()
-        self.refresh()
+    def _name(self) -> str:
+        return self.var_detector.get()
 
     def _detector(self) -> DetectorCalibration:
-        return self.app.detectors[self.var_detector.get()]
+        return self.app.detectors[self._name()]
 
-    def read_daq(self) -> None:
-        try:
-            n = CALIBRATION_READ_BURSTS
-            v1, v2 = self.app.read_average_voltages(n)
-        except Exception as e:
-            messagebox.showerror("Read DAQ", str(e), parent=self.win)
+    def _on_detector_change(self) -> None:
+        name = self._name()
+        for var in self.checks.values():
+            var.set(False)
+        self.var_meter_wl.set(False)
+        self.lbl_other.config(
+            text=f"The {self.OTHER_LASER[name]} is off or shuttered (the meter at the objective sees both beams)."
+        )
+        self.btn_read_laser.config(text=f"Read {self.OWN_LASER[name]}")
+        self.lbl_last.config(text="")
+        if self.gain_box is not None:
+            self.gain_box.destroy()
+        # Shares the main window's gain variable, so both always show the same (last used) gain.
+        self.gain_box = self.app._gain_box(self.gain_frame, name)
+        self.gain_box.pack()
+        if name in LINEWIDTH_DETECTORS:
+            self.lw_frame.pack(side="left", before=self.btn_read_laser)
+        else:
+            self.lw_frame.pack_forget()
+        self._show_dark()
+        self.refresh()
+
+    def _set_wavelength(self) -> None:
+        name = self._name()
+        ent = self.app.wavelength_entries[name]
+        ent.delete(0, tk.END)
+        ent.insert(0, self.ent_wl.get().strip())
+        self.app.set_wavelength(name)
+        self.refresh()
+
+    def _set_linewidth(self) -> None:
+        name = self._name()
+        ent = self.app.linewidth_entries.get(name)
+        if ent is None:
             return
-        name = self.var_detector.get()
-        v = v1 if name == "PDA50B2" else v2
-        self.ent_voltage.delete(0, tk.END)
-        self.ent_voltage.insert(0, f"{v:.5f}")
+        ent.delete(0, tk.END)
+        ent.insert(0, self.ent_lw.get().strip())
+        self.app.set_linewidth(name)
+        self.refresh()
+
+    def _read_laser(self) -> None:
+        # Same read-only reader as the main window; its result updates the main window, then refresh() here.
+        self.app.source_controls[self._name()].read(manual=True)
+
+    def _read_voltage(self, title: str) -> Optional[float]:
+        try:
+            v1, v2 = self.app.read_average_voltages(CALIBRATION_READ_BURSTS)
+        except Exception as e:
+            messagebox.showerror(title, str(e), parent=self.win)
+            return None
+        name = self._name()
         if name in self.app.saturated_detectors():
             messagebox.showwarning(
-                "Read DAQ",
-                f"{name} saturated during this reading, so the average is not reliable. "
-                "Lower the detector gain or the power before adding this point.",
+                title,
+                f"{name} saturated during this reading, so it was not used. "
+                "Lower the detector gain or the power.",
                 parent=self.win,
             )
+            return None
+        return v1 if name == "PDA50B2" else v2
+
+    def measure_dark(self) -> None:
+        v = self._read_voltage("Measure Dark")
+        if v is None:
+            return
+        self.dark_v[self._name()] = v
+        self._show_dark()
+        self.checks["dark"].set(True)
+
+    def _show_dark(self) -> None:
+        v = self.dark_v[self._name()]
+        self.lbl_dark.config(text="not measured" if v is None else f"{v * 1000:+.2f} mV")
+
+    def _update_points_state(self) -> None:
+        if not hasattr(self, "btn_add"):
+            return  # still building the window
+        setup_done = all(var.get() for var in self.checks.values()) and self.dark_v[self._name()] is not None
+        ready = setup_done and self.var_meter_wl.get()
+        self.btn_add.config(state="normal" if ready else "disabled")
+        self.ent_power.config(state="normal" if ready else "disabled")
+        if not setup_done:
+            hint = "Finish the setup checks above (including Measure Dark) to add points."
+        elif not ready:
+            hint = "Set the wavelength, set the power meter to it, then tick the box."
+        else:
+            hint = ("Change only the laser power (3-5 levels) at this wavelength, then change the wavelength "
+                    "and repeat.\nType the meter reading, then Read DAQ + Add.")
+        self.lbl_points_hint.config(text=hint)
+
+    # ---- points ----
 
     def add_point(self) -> None:
-        try:
-            wl = float(self.ent_wl.get())
-            linewidth = float(self.ent_lw.get() or 0)
-            power = float(self.ent_power.get())
-            voltage = float(self.ent_voltage.get())
-            if wl <= 0 or power <= 0 or linewidth < 0:
-                raise ValueError("wavelength and power must be > 0, linewidth >= 0")
-        except ValueError as e:
-            messagebox.showerror("Add Point", f"Check wavelength, power and voltage: {e}", parent=self.win)
+        if str(self.btn_add.cget("state")) == "disabled":
             return
-        name = self.var_detector.get()
+        name = self._name()
+        try:
+            power = float(self.ent_power.get())
+            if power <= 0:
+                raise ValueError("power must be > 0")
+        except ValueError as e:
+            messagebox.showerror("Add Point", f"Check the power at the objective: {e}", parent=self.win)
+            return
         gain = self.app.gain_db(name)
         if gain is None:
             messagebox.showerror("Add Point", f"Set the {name} gain first.", parent=self.win)
             return
+        wl = self.app.wavelengths[name]
+        linewidth = self.app.linewidths[name]
         path = dict(self.app.path_model.installed)
         t_path = self.app.path_model.transmission(name, wl, path, linewidth)
         if t_path < MIN_PATH_TRANSMISSION:
             messagebox.showerror(
                 "Add Point",
                 f"Only {t_path * 100:.2f}% of the {name} beam reaches the objective at {wl:g} nm "
-                f"with {self.app.path_model.label(path)}. Check the optics selection.",
+                f"with {self.app.path_model.label(path)}. Check the wavelength and dichroic.",
                 parent=self.win,
             )
             return
@@ -1307,52 +1422,88 @@ class CalibrationWindow:
             if answer:
                 self.app._apply_loaded_calibration(name, DetectorCalibration(name), None)
                 det = self._detector()
+        voltage = self._read_voltage("Add Point")
+        if voltage is None:
+            return
+        # The dark reading becomes a 0 mW point at each new wavelength, so each fit has an offset.
+        if not any(p.power_mw == 0 and p.wavelength_nm == wl for p in det.points):
+            det.points.append(CalibrationPoint(wl, 0.0, self.dark_v[name], path, linewidth, gain))
         det.points.append(CalibrationPoint(wl, power, voltage, path, linewidth, gain))
         self.app.calibration_dirty[name] = True
+        self.lbl_last.config(text=f"added {power:g} mW -> {voltage:.5f} V")
         self.ent_power.delete(0, tk.END)
-        self.ent_voltage.delete(0, tk.END)
         self.refresh()
 
     def delete_selected(self) -> None:
         det = self._detector()
-        idx = sorted((int(i) for i in self.tree.selection()), reverse=True)
-        for i in idx:
+        idx = set()
+        for iid in self.tree.selection():
+            if iid.startswith("p"):
+                idx.add(int(iid[1:]))
+            else:  # a wavelength row: delete all its points
+                idx.update(int(c[1:]) for c in self.tree.get_children(iid))
+        for i in sorted(idx, reverse=True):
             del det.points[i]
         if idx:
-            self.app.calibration_dirty[self.var_detector.get()] = True
+            self.app.calibration_dirty[self._name()] = True
         self.refresh()
 
+    def _save(self) -> None:
+        if self.app.save_calibration_dialog(self._name()):
+            self.refresh()
+
     def refresh(self) -> None:
+        name = self._name()
         det = self._detector()
-        self.tree.delete(*self.tree.get_children())
-        for i, p in enumerate(det.points):
-            k = p.voltage_v / p.power_mw if p.power_mw else float("nan")
-            self.tree.insert(
-                "", "end", iid=str(i),
-                values=(
-                    f"{p.wavelength_nm:g}" + (f" (w {p.linewidth_nm:g})" if p.linewidth_nm else ""),
-                    f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}",
-                    _gain_text(p.gain_db) or "?",
-                    self.app.path_model.label(p.path) if p.path else "(not recorded)",
-                ),
-            )
-        name = self.var_detector.get()
-        wl_now = self.app.wavelengths[name]
-        self.lbl_path.config(
-            text=f"Measure the reference power at the objective.\n"
-            f"Optics now: {self.app.path_model.label()}  "
-            f"({name} path {self.app.path_model.transmission(name, wl_now) * 100:.1f}% at {wl_now:g} nm)"
+        self.lbl_dichroic.config(
+            text=f"Installed dichroic is {', '.join(self.app.path_model.installed.values())} "
+            f"({self.app.path_model.transmission(name, self.app.wavelengths[name]) * 100:.1f}% of this beam "
+            "reaches the objective)."
         )
-        lines = ["Fit per wavelength, detector only (V = k*P/T_path + offset):"]
-        for wl, k, offset, n in det.fit_by_wavelength():
-            ratio = k / det.default_factor(wl)
-            lines.append(
-                f"  {wl:7.1f} nm  k={k:8.4g} V/mW  offset={offset * 1000:+7.2f} mV"
-                f"  n={n}  vs default curve x{ratio:.3f}"
-            )
-        if len(lines) == 1:
-            lines.append("  (no points: using default curve)")
-        self.lbl_fit.config(text="\n".join(lines))
+        if self._meter_wl != self.app.wavelengths[name]:
+            self._meter_wl = self.app.wavelengths[name]
+            self.var_meter_wl.set(False)
+        if self.win.focus_get() is not self.ent_wl:
+            self.ent_wl.delete(0, tk.END)
+            self.ent_wl.insert(0, f"{self.app.wavelengths[name]:g}")
+        if name in LINEWIDTH_DETECTORS and self.win.focus_get() is not self.ent_lw:
+            self.ent_lw.delete(0, tk.END)
+            self.ent_lw.insert(0, f"{self.app.linewidths[name]:g}")
+
+        self.tree.delete(*self.tree.get_children())
+        fits = {wl: (k, offset) for wl, k, offset, _n in det.fit_by_wavelength()}
+        groups: Dict[float, List[int]] = {}
+        for i, p in enumerate(det.points):
+            groups.setdefault(round(float(p.wavelength_nm), 3), []).append(i)
+        for wl in sorted(groups):
+            lw = det.points[groups[wl][0]].linewidth_nm
+            text = f"{wl:g} nm" + (f" (width {lw:g})" if lw else "")
+            if wl in fits:
+                k, offset = fits[wl]
+                text += f"   fit x{k / det.default_factor(wl):.3f} of default, offset {offset * 1000:+.2f} mV"
+            parent = self.tree.insert("", "end", iid=f"w{wl}", text=text, open=True)
+            dark = next((det.points[i].voltage_v for i in groups[wl] if det.points[i].power_mw == 0), 0.0)
+            for i in groups[wl]:
+                p = det.points[i]
+                k = (p.voltage_v - dark) / p.power_mw if p.power_mw else float("nan")
+                self.tree.insert(
+                    parent, "end", iid=f"p{i}", text="",
+                    values=(
+                        "dark" if p.power_mw == 0 else f"{p.power_mw:.5g}",
+                        f"{p.voltage_v:.5f}",
+                        "" if p.power_mw == 0 else f"{k:.4g}",
+                        _gain_text(p.gain_db) or "?",
+                        ", ".join(p.path.values()) if p.path else "?",
+                    ),
+                )
+        n = sum(1 for p in det.points if p.power_mw > 0)
+        unsaved = " (unsaved)" if self.app.calibration_dirty[name] else ""
+        self.lbl_status.config(
+            text=f"{name}: {n} point(s) at {len(groups)} wavelength(s){unsaved}" if n else
+            f"{name}: no points, using the default curve"
+        )
+        self.btn_save.config(text=f"Save {name} Calibration...", state="normal" if det.points else "disabled")
+        self._update_points_state()
         self.app._refresh_conversion_display()
 
     def close(self) -> None:
