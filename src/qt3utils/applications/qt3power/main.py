@@ -45,15 +45,16 @@ from qt3utils.applications.qt3power.paths import (
 DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
 
 # Each reading is a hardware-timed burst averaged over many samples, so pulsed
-# sources (e.g. SuperK CHROMATUNE, 0.15-78 MHz) average out. The default rate is
-# deliberately not a round number: a rate that divides the pulse rate would sample
-# every pulse at the same phase and bias the average.
-DEFAULT_BURST_SAMPLES = 500
-DEFAULT_BURST_RATE_HZ = 9973.0
+# sources (e.g. SuperK CHROMATUNE, 0.15-78 MHz) average out. Sized for the lab's
+# NI USB-6343 (500 kS/s aggregate; 2 channels x ~100 kS/s = 200 kS/s): 5000
+# samples take 50 ms per reading. The rate is deliberately not a round number:
+# a rate that divides the pulse rate would sample every pulse at the same phase
+# and bias the average.
+DEFAULT_BURST_SAMPLES = 5000
+DEFAULT_BURST_RATE_HZ = 99991.0
+# Bursts averaged by Read DAQ in the Calibrate window.
+CALIBRATION_READ_BURSTS = 10
 
-# Detector output limit (V, high-impedance load; halve for 50 ohm). A burst whose
-# largest sample reaches SATURATION_FRACTION of this, or of the DAQ range, is
-# flagged: the average is then not linear in power.
 # Laser read by each detector; its "Read ..." button fills that detector's boxes.
 SUPERK_DETECTOR = "PDA100A2"  # NKT SuperK CHROMATUNE
 SANTEC_DETECTOR = "PDA50B2"  # Santec TSL lasers via qt3santec's switch
@@ -61,6 +62,9 @@ SOURCE_AUTO_INTERVAL_MS = 5000
 # Only broadband sources get a linewidth box; the others are narrow lines (linewidth 0).
 LINEWIDTH_DETECTORS = (SUPERK_DETECTOR,)
 
+# Detector output limit (V, high-impedance load; halve for 50 ohm). A burst whose
+# largest sample reaches SATURATION_FRACTION of this, or of the DAQ range, is
+# flagged: the average is then not linear in power.
 DETECTOR_MAX_OUTPUT_V = {"PDA50B2": 10.0, "PDA100A2": 10.0}
 SATURATION_FRACTION = 0.95
 
@@ -273,47 +277,37 @@ class PowerMonitorApp:
         cfg_frame = tk.LabelFrame(main_frame, text="Configuration")
         cfg_frame.pack(fill="x", pady=5)
 
-        tk.Label(cfg_frame, text="DAQ Device:").grid(row=0, column=0, sticky="e")
-        self.ent_device = tk.Entry(cfg_frame, width=8)
-        self.ent_device.grid(row=0, column=1, sticky="w")
+        daq_row = tk.Frame(cfg_frame)
+        daq_row.grid(row=0, column=0, sticky="w")
+        tk.Label(daq_row, text="DAQ Device:").pack(side="left")
+        self.ent_device = tk.Entry(daq_row, width=8)
+        self.ent_device.pack(side="left", padx=(2, 10))
         self.ent_device.insert(0, "Dev1")
 
-        tk.Label(cfg_frame, text="PDA50B2 Ch:").grid(row=0, column=2, sticky="e")
-        self.ent_ch1 = tk.Entry(cfg_frame, width=6)
-        self.ent_ch1.grid(row=0, column=3, sticky="w")
+        tk.Label(daq_row, text="PDA50B2 Ch:").pack(side="left")
+        self.ent_ch1 = tk.Entry(daq_row, width=6)
+        self.ent_ch1.pack(side="left", padx=(2, 10))
         self.ent_ch1.insert(0, "ai2")
 
-        tk.Label(cfg_frame, text="PDA100A2 Ch:").grid(row=0, column=4, sticky="e")
-        self.ent_ch2 = tk.Entry(cfg_frame, width=6)
-        self.ent_ch2.grid(row=0, column=5, sticky="w")
+        tk.Label(daq_row, text="PDA100A2 Ch:").pack(side="left")
+        self.ent_ch2 = tk.Entry(daq_row, width=6)
+        self.ent_ch2.pack(side="left", padx=(2, 10))
         self.ent_ch2.insert(0, "ai0")
 
-        tk.Label(cfg_frame, text="Avg samples:").grid(row=0, column=6, sticky="e")
-        self.ent_burst_samples = tk.Entry(cfg_frame, width=6)
-        self.ent_burst_samples.grid(row=0, column=7, sticky="w")
-        self.ent_burst_samples.insert(0, str(DEFAULT_BURST_SAMPLES))
-
-        tk.Label(cfg_frame, text="Rate (Hz):").grid(row=0, column=8, sticky="e")
-        self.ent_burst_rate = tk.Entry(cfg_frame, width=7)
-        self.ent_burst_rate.grid(row=0, column=9, sticky="w")
-        self.ent_burst_rate.insert(0, f"{DEFAULT_BURST_RATE_HZ:g}")
-
-        init_row = tk.Frame(cfg_frame)
-        init_row.grid(row=1, column=0, columnspan=10, sticky="w")
         self.btn_init = tk.Button(
-            init_row,
+            daq_row,
             text="Initialize DAQ",
             command=self.init_daq,
             bg="#dddddd",
         )
         self.btn_init.pack(side="left")
 
-        self.lbl_status = tk.Label(init_row, text="DAQ: Not initialized", fg="red")
+        self.lbl_status = tk.Label(daq_row, text="DAQ: Not initialized", fg="red")
         self.lbl_status.pack(side="left", padx=8)
 
         # Optics between the beam sampler and the objective, one dropdown per slot
         optics_row = tk.Frame(cfg_frame)
-        optics_row.grid(row=2, column=0, columnspan=10, sticky="w")
+        optics_row.grid(row=1, column=0, sticky="w")
         for slot, spec in self.path_model.slots.items():
             tk.Label(optics_row, text=f"{slot}:").pack(side="left", padx=(0, 3))
             var = tk.StringVar(value=self.path_model.installed[slot])
@@ -329,11 +323,13 @@ class PowerMonitorApp:
         ):
             tk.Button(optics_row, text=text, command=cmd).pack(side="left", padx=2)
 
-        tk.Label(cfg_frame, text="Calibration:").grid(row=3, column=0, sticky="e")
+        cal_row = tk.Frame(cfg_frame)
+        cal_row.grid(row=2, column=0, sticky="w")
+        tk.Label(cal_row, text="Calibration:").pack(side="left", anchor="n")
         self.lbl_cal_source = tk.Label(
-            cfg_frame, text="", anchor="w", justify="left", wraplength=620, font=("Arial", 10, "bold")
+            cal_row, text="", anchor="w", justify="left", wraplength=620, font=("Arial", 10, "bold")
         )
-        self.lbl_cal_source.grid(row=3, column=1, columnspan=9, sticky="w")
+        self.lbl_cal_source.pack(side="left", padx=4)
 
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
@@ -478,17 +474,8 @@ class PowerMonitorApp:
             return
 
         try:
-            n_burst = int(self.ent_burst_samples.get())
-            rate = float(self.ent_burst_rate.get())
-            if n_burst < 1 or rate <= 0:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Error", "Avg samples must be an integer >= 1 and Rate a number > 0.")
-            return
-
-        try:
             # Test connection by reading once.
-            test_ctrl = PhotodetectorController(device, ch1, ch2, burst_samples=n_burst, burst_rate_hz=rate)
+            test_ctrl = PhotodetectorController(device, ch1, ch2)
             v1, v2 = test_ctrl.read_both_detectors()
 
             # If we get here, DAQ is working; keep a controller instance.
@@ -1141,10 +1128,6 @@ class CalibrationWindow:
         self.ent_voltage = tk.Entry(frm, width=10)
         self.ent_voltage.grid(row=3, column=1, sticky="w", padx=3, pady=2)
         tk.Button(frm, text="Read DAQ", command=self.read_daq).grid(row=3, column=2, padx=3)
-        tk.Label(frm, text="Bursts:").grid(row=3, column=3, sticky="e")
-        self.ent_samples = tk.Entry(frm, width=5)
-        self.ent_samples.grid(row=3, column=4, sticky="w", padx=3)
-        self.ent_samples.insert(0, "10")
 
         tk.Button(frm, text="Add Point", command=self.add_point, bg="#ccffcc").grid(
             row=4, column=1, sticky="w", padx=3, pady=5
@@ -1186,7 +1169,7 @@ class CalibrationWindow:
 
     def read_daq(self) -> None:
         try:
-            n = int(self.ent_samples.get())
+            n = CALIBRATION_READ_BURSTS
             v1, v2 = self.app.read_average_voltages(n)
         except Exception as e:
             messagebox.showerror("Read DAQ", str(e), parent=self.win)
