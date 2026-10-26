@@ -357,7 +357,7 @@ class PowerMonitorApp:
                 tk.Button(cal_frame, text=text, command=lambda f=cmd, n=name: f(n)).grid(
                     row=r, column=1 + c, padx=2, pady=1
                 )
-            lbl = tk.Label(cal_frame, text="", anchor="w", justify="left", wraplength=520, font=("Arial", 10, "bold"))
+            lbl = tk.Label(cal_frame, text="", anchor="w", justify="left", wraplength=520, font=("Arial", 10))
             lbl.grid(row=r, column=4, sticky="w", padx=6)
             self.cal_status_labels[name] = lbl
 

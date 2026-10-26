@@ -338,7 +338,7 @@ def default_calibration_filename(
     name: str, installed: Dict[str, str], when: Optional[datetime.datetime] = None
 ) -> str:
     when = when or datetime.datetime.now()
-    optics = "_".join(f"{slot}-{optic}" for slot, optic in sorted(installed.items())) or "no-optics"
+    optics = "_".join(optic for _slot, optic in sorted(installed.items())) or "no-optics"
     return f"qt3power_cal_{name}_{optics}_{when:%Y%m%d-%H%M}.json"
 
 
