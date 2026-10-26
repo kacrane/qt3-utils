@@ -285,26 +285,41 @@ class DetectorCalibration:
         )
 
 
-def save_calibrations(path: Path, detectors: Dict[str, DetectorCalibration], notes: str = "") -> None:
+def save_calibration(path: Path, det: DetectorCalibration, notes: str = "") -> None:
+    """Write one detector's calibration to its own file."""
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "format": CALIBRATION_FORMAT,
         "saved": datetime.datetime.now().isoformat(timespec="seconds"),
+        "detector": det.name,
         "notes": notes,
-        "detectors": {name: det.to_dict() for name, det in detectors.items()},
+        "detectors": {det.name: det.to_dict()},
     }
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
 
-def load_calibrations(path: Path) -> Dict[str, DetectorCalibration]:
+def _read_calibration_file(path: Path) -> dict:
     with open(Path(path).expanduser()) as f:
         data = json.load(f)
-    return {
-        name: DetectorCalibration.from_dict(name, d)
-        for name, d in data.get("detectors", {}).items()
-    }
+    if data.get("format") != CALIBRATION_FORMAT:
+        raise ValueError("not a qt3power calibration file")
+    return data
+
+
+def load_calibration(path: Path, name: str) -> DetectorCalibration:
+    """Read the calibration for detector `name` from a file.
+
+    Raises:
+        ValueError: the file has no calibration for that detector.
+    """
+    data = _read_calibration_file(path)
+    d = data.get("detectors", {}).get(name)
+    if d is None:
+        other = ", ".join(data.get("detectors", {})) or "no detector"
+        raise ValueError(f"This file is a calibration for {other}, not {name}.")
+    return DetectorCalibration.from_dict(name, d)
 
 
 def optics_label(path: Dict[str, str]) -> str:
@@ -314,22 +329,24 @@ def optics_label(path: Dict[str, str]) -> str:
     return ", ".join(f"{slot}={optic}" for slot, optic in sorted(path.items()))
 
 
-def calibration_optics(detectors: Dict[str, DetectorCalibration]) -> List[str]:
-    """Sorted distinct optics labels of all points in a calibration."""
-    return sorted({optics_label(p.path) for det in detectors.values() for p in det.points})
+def calibration_optics(det: DetectorCalibration) -> List[str]:
+    """Sorted distinct optics labels of a detector's calibration points."""
+    return sorted({optics_label(p.path) for p in det.points})
 
 
-def default_calibration_filename(installed: Dict[str, str], when: Optional[datetime.datetime] = None) -> str:
+def default_calibration_filename(
+    name: str, installed: Dict[str, str], when: Optional[datetime.datetime] = None
+) -> str:
     when = when or datetime.datetime.now()
     optics = "_".join(f"{slot}-{optic}" for slot, optic in sorted(installed.items())) or "no-optics"
-    return f"qt3power_cal_{optics}_{when:%Y%m%d-%H%M}.json"
+    return f"qt3power_cal_{name}_{optics}_{when:%Y%m%d-%H%M}.json"
 
 
 @dataclass
 class CalibrationFileInfo:
     path: Path
     saved: datetime.datetime
-    optics: List[str]
+    optics: Dict[str, List[str]]  # detector -> optics labels of its points (detectors with points only)
 
 
 def scan_calibration_files(folders: List[Path]) -> List[CalibrationFileInfo]:
@@ -341,22 +358,31 @@ def scan_calibration_files(folders: List[Path]) -> List[CalibrationFileInfo]:
             continue
         for f in folder.glob("*.json"):
             try:
-                with open(f) as fh:
-                    data = json.load(fh)
-                if data.get("format") != CALIBRATION_FORMAT:
-                    continue
+                data = _read_calibration_file(f)
                 try:
                     saved = datetime.datetime.fromisoformat(data["saved"])
                 except Exception:
                     saved = datetime.datetime.fromtimestamp(f.stat().st_mtime)
-                dets = {n: DetectorCalibration.from_dict(n, d) for n, d in data.get("detectors", {}).items()}
-                found[f.resolve()] = CalibrationFileInfo(f, saved, calibration_optics(dets))
+                optics = {}
+                for n, d in data.get("detectors", {}).items():
+                    det = DetectorCalibration.from_dict(n, d)
+                    if det.points:
+                        optics[n] = calibration_optics(det)
+                found[f.resolve()] = CalibrationFileInfo(f, saved, optics)
             except Exception:
                 continue  # unreadable or not a calibration: ignore
     return sorted(found.values(), key=lambda i: i.saved, reverse=True)
 
 
-# Calibration status shown in the main window.
+def newest_calibration_file(
+    library: List[CalibrationFileInfo], name: str, installed: Dict[str, str]
+) -> Optional[CalibrationFileInfo]:
+    """Newest file holding a calibration for `name` measured only with the installed optics."""
+    current = [optics_label(installed)]
+    return next((i for i in library if i.optics.get(name) == current), None)
+
+
+# Calibration status shown in the main window, per detector.
 STATUS_CURRENT = "current"  # newest saved calibration for the installed optics (or unsaved, same optics)
 STATUS_OLDER = "older"  # right optics, but a newer file with the same optics exists
 STATUS_WRONG_OPTICS = "wrong_optics"  # measured with different optics than installed
@@ -364,16 +390,16 @@ STATUS_DEFAULT = "default"  # no calibration: Thorlabs curves
 
 
 def calibration_status(
-    detectors: Dict[str, DetectorCalibration],
+    det: DetectorCalibration,
     loaded_path: Optional[Path],
     dirty: bool,
     installed: Dict[str, str],
     library: List[CalibrationFileInfo],
 ) -> Tuple[str, str]:
-    """Return (status, text) describing the calibration in use."""
-    optics = calibration_optics(detectors)
+    """Return (status, text) describing the calibration in use for one detector."""
+    optics = calibration_optics(det)
     if not optics:
-        return STATUS_DEFAULT, "Thorlabs default curves (no calibration loaded)"
+        return STATUS_DEFAULT, "Thorlabs default curve"
     name = loaded_path.name if loaded_path is not None else "unsaved points"
     if dirty and loaded_path is not None:
         name += " (unsaved changes)"
@@ -382,13 +408,13 @@ def calibration_status(
         return STATUS_WRONG_OPTICS, f"{name} - measured with {'; '.join(optics)}, but {current} is installed"
     if loaded_path is None or dirty:
         return STATUS_CURRENT, f"{name} - {current}"
-    newest = next((i for i in library if i.optics == [current]), None)
+    newest = newest_calibration_file(library, det.name, installed)
     loaded_saved = next(
         (i.saved for i in library if i.path.resolve() == Path(loaded_path).resolve()), None
     )
     if newest is None or loaded_saved is None or loaded_saved >= newest.saved:
-        return STATUS_CURRENT, f"{name} - newest for {current}"
-    return STATUS_OLDER, f"{name} - older; newest for {current} is {newest.path.name}"
+        return STATUS_CURRENT, f"{name} - newest"
+    return STATUS_OLDER, f"{name} - older; newest is {newest.path.name}"
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> dict:

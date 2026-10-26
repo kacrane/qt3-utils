@@ -18,17 +18,17 @@ from qt3utils.applications.qt3power.calibration import (
     STATUS_WRONG_OPTICS,
     calibration_status,
     default_calibration_filename,
-    optics_label,
+    newest_calibration_file,
     scan_calibration_files,
     CalibrationPoint,
     DetectorCalibration,
-    load_calibrations,
+    load_calibration,
     MIN_PATH_TRANSMISSION,
     load_last_wavelengths,
     load_last_gains,
     GAIN_OPTIONS_DB,
     load_settings,
-    save_calibrations,
+    save_calibration,
     save_last_wavelengths,
     update_settings,
 )
@@ -266,8 +266,10 @@ class PowerMonitorApp:
         self.detectors: Dict[str, DetectorCalibration] = {
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
-        self.calibration_path: Optional[Path] = None
-        self.calibration_dirty = False  # points added/deleted since last save or load
+        # Each detector has its own calibration file, loaded and saved independently.
+        self.calibration_path: Dict[str, Optional[Path]] = {name: None for name in DETECTOR_NAMES}
+        self.calibration_dirty: Dict[str, bool] = {name: False for name in DETECTOR_NAMES}  # unsaved points
+        self.cal_status_labels: Dict[str, tk.Label] = {}
         self.calibration_window: Optional["CalibrationWindow"] = None
         self.last_voltages: Optional[Tuple[float, float]] = None
 
@@ -340,21 +342,24 @@ class PowerMonitorApp:
             box.pack(side="left", padx=(0, 12))
             box.bind("<<ComboboxSelected>>", lambda _e, s=slot: self.set_installed_optic(s))
             self.path_vars[slot] = var
-        for text, cmd in (
-            ("Calibrate...", self.open_calibration_window),
-            ("Load Cal...", self.load_calibration_dialog),
-            ("Save Cal...", self.save_calibration_dialog),
-            ("Use Default Curve", self.clear_calibration),
-        ):
-            tk.Button(optics_row, text=text, command=cmd).pack(side="left", padx=2)
+        tk.Button(optics_row, text="Calibrate...", command=self.open_calibration_window).pack(side="left", padx=2)
 
-        cal_row = tk.Frame(cfg_frame)
-        cal_row.grid(row=2, column=0, sticky="w")
-        tk.Label(cal_row, text="Calibration:").pack(side="left", anchor="n")
-        self.lbl_cal_source = tk.Label(
-            cal_row, text="", anchor="w", justify="left", wraplength=620, font=("Arial", 10, "bold")
-        )
-        self.lbl_cal_source.pack(side="left", padx=4)
+        # One calibration file per detector: its own Load/Save/Default buttons and status.
+        cal_frame = tk.Frame(cfg_frame)
+        cal_frame.grid(row=2, column=0, sticky="w")
+        for r, name in enumerate(DETECTOR_NAMES):
+            tk.Label(cal_frame, text=f"{name} cal:").grid(row=r, column=0, sticky="w")
+            for c, (text, cmd) in enumerate((
+                ("Load...", self.load_calibration_dialog),
+                ("Save...", self.save_calibration_dialog),
+                ("Default", self.clear_calibration),
+            )):
+                tk.Button(cal_frame, text=text, command=lambda f=cmd, n=name: f(n)).grid(
+                    row=r, column=1 + c, padx=2, pady=1
+                )
+            lbl = tk.Label(cal_frame, text="", anchor="w", justify="left", wraplength=520, font=("Arial", 10, "bold"))
+            lbl.grid(row=r, column=4, sticky="w", padx=6)
+            self.cal_status_labels[name] = lbl
 
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
@@ -755,8 +760,8 @@ class PowerMonitorApp:
                 lines.append(f"Note: outside curve range {lo:g}-{hi:g} nm, using the end value")
         else:
             lines.append("Source: fixed factor, no responsivity curve")
-        if self.calibration_path is not None:
-            lines.append(f"File: {self.calibration_path}")
+        if self.calibration_path[name] is not None:
+            lines.append(f"File: {self.calibration_path[name]}")
         source = self.source_controls.get(name)
         if source is not None and source.last is not None:
             lines.append(source.last.detail)
@@ -775,93 +780,96 @@ class PowerMonitorApp:
         return "\n".join(lines)
 
     def _refresh_conversion_display(self) -> None:
-        status, text = calibration_status(
-            self.detectors,
-            self.calibration_path,
-            self.calibration_dirty,
-            self.path_model.installed,
-            self._calibration_library(),
-        )
-        self.lbl_cal_source.config(text=text, fg=STATUS_COLORS[status])
+        library = self._calibration_library()
+        for name in DETECTOR_NAMES:
+            status, text = calibration_status(
+                self.detectors[name],
+                self.calibration_path[name],
+                self.calibration_dirty[name],
+                self.path_model.installed,
+                library,
+            )
+            self.cal_status_labels[name].config(text=text, fg=STATUS_COLORS[status])
         if self.last_voltages is not None:
             self._show_readings(*self.last_voltages)
 
-    def _apply_loaded_calibrations(self, loaded: Dict[str, DetectorCalibration]) -> None:
-        for name in DETECTOR_NAMES:
-            self.detectors[name] = loaded.get(name, DetectorCalibration(name))
-        self.calibration_dirty = False
+    def _apply_loaded_calibration(self, name: str, det: DetectorCalibration, path: Optional[Path]) -> None:
+        self.detectors[name] = det
+        self.calibration_path[name] = path
+        self.calibration_dirty[name] = False
         self._wire_detectors()
 
-    def _confirm_discard_unsaved(self, action: str) -> bool:
-        if not self.calibration_dirty:
+    def _confirm_discard_unsaved(self, name: str, action: str) -> bool:
+        if not self.calibration_dirty[name]:
             return True
         return messagebox.askyesno(
             "Unsaved calibration",
-            f"You have unsaved calibration points. {action} anyway and discard them?",
+            f"You have unsaved {name} calibration points. {action} anyway and discard them?",
         )
 
     def _calibration_library(self):
         """Saved calibration files the status compares against, newest first."""
         folders = [CALIBRATIONS_DIR, DEFAULT_CALIBRATION_PATH.parent]
-        if self.calibration_path is not None:
-            folders.append(self.calibration_path.parent)
+        folders += [p.parent for p in self.calibration_path.values() if p is not None]
         return scan_calibration_files(folders)
 
     def _load_newest_calibration_for_installed_optics(self) -> None:
-        """At startup: load the newest saved calibration measured with the installed optics, if any."""
-        current = optics_label(self.path_model.installed)
-        for info in self._calibration_library():
-            if info.optics != [current]:
+        """At startup: for each detector, load the newest saved calibration measured with the installed optics."""
+        library = self._calibration_library()
+        for name in DETECTOR_NAMES:
+            info = newest_calibration_file(library, name, self.path_model.installed)
+            if info is None:
                 continue
             try:
-                self._apply_loaded_calibrations(load_calibrations(info.path))
-                self.calibration_path = info.path
+                self._apply_loaded_calibration(name, load_calibration(info.path, name), info.path)
             except Exception as e:
                 messagebox.showwarning(
                     "Calibration",
-                    f"Could not load {info.path}:\n{e}\nUsing default responsivity curve.",
+                    f"Could not load {info.path}:\n{e}\nUsing the default {name} curve.",
                 )
-            return
 
-    def load_calibration_dialog(self) -> None:
-        if not self._confirm_discard_unsaved("Load a calibration"):
+    def load_calibration_dialog(self, name: str) -> None:
+        if not self._confirm_discard_unsaved(name, "Load a calibration"):
             return
         path = filedialog.askopenfilename(
-            title="Load qt3power calibration",
+            title=f"Load {name} calibration",
             initialdir=str(CALIBRATIONS_DIR if CALIBRATIONS_DIR.is_dir() else DEFAULT_CALIBRATION_PATH.parent),
-            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+            filetypes=[(f"{name} calibration", f"*{name}*.json"), ("JSON", "*.json"), ("All files", "*.*")],
         )
         if not path:
             return
         try:
-            self._apply_loaded_calibrations(load_calibrations(path))
+            det = load_calibration(path, name)
         except Exception as e:
             messagebox.showerror("Calibration", f"Could not load {path}:\n{e}")
             return
-        self.calibration_path = Path(path)
+        self._apply_loaded_calibration(name, det, Path(path))
         self._refresh_conversion_display()
         if self.calibration_window is not None:
             self.calibration_window.refresh()
 
-    def save_calibration_dialog(self) -> bool:
-        """Returns True if the calibration was saved."""
+    def save_calibration_dialog(self, name: str) -> bool:
+        """Save one detector's calibration to its own file. Returns True if saved."""
+        if not self.detectors[name].points:
+            messagebox.showinfo("Save calibration", f"{name} has no calibration points to save.")
+            return False
         CALIBRATIONS_DIR.mkdir(parents=True, exist_ok=True)
         path = filedialog.asksaveasfilename(
-            title="Save qt3power calibration",
+            title=f"Save {name} calibration",
             initialdir=str(CALIBRATIONS_DIR),
-            initialfile=default_calibration_filename(self.path_model.installed),
+            initialfile=default_calibration_filename(name, self.path_model.installed),
             defaultextension=".json",
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
         if not path:
             return False
         try:
-            save_calibrations(path, self.detectors)
+            save_calibration(path, self.detectors[name])
         except Exception as e:
             messagebox.showerror("Calibration", f"Could not save {path}:\n{e}")
             return False
-        self.calibration_path = Path(path)
-        self.calibration_dirty = False
+        self.calibration_path[name] = Path(path)
+        self.calibration_dirty[name] = False
         self._refresh_conversion_display()
         if Path(path).expanduser().resolve().parent not in (
             CALIBRATIONS_DIR.resolve(),
@@ -874,18 +882,15 @@ class PowerMonitorApp:
             )
         return True
 
-    def clear_calibration(self) -> None:
-        if any(d.is_calibrated for d in self.detectors.values()):
+    def clear_calibration(self, name: str) -> None:
+        if self.detectors[name].is_calibrated:
             if not messagebox.askyesno(
                 "Use default curve",
-                "Discard the measured calibration in memory and use the default responsivity curve?\n"
+                f"Discard the {name} calibration in memory and use the default responsivity curve?\n"
                 "(Saved files are not deleted.)",
             ):
                 return
-        self.detectors = {name: DetectorCalibration(name) for name in DETECTOR_NAMES}
-        self.calibration_path = None
-        self.calibration_dirty = False
-        self._wire_detectors()
+        self._apply_loaded_calibration(name, DetectorCalibration(name), None)
         self._refresh_conversion_display()
         if self.calibration_window is not None:
             self.calibration_window.refresh()
@@ -981,14 +986,16 @@ class PowerMonitorApp:
 
     def on_closing(self) -> None:
         """Cleanly stop monitoring and close the window."""
-        if self.calibration_dirty:
+        for name in DETECTOR_NAMES:
+            if not self.calibration_dirty[name]:
+                continue
             answer = messagebox.askyesnocancel(
                 "Unsaved calibration",
-                "You have unsaved calibration points. Save them before closing?",
+                f"You have unsaved {name} calibration points. Save them before closing?",
             )
             if answer is None:
                 return
-            if answer and not self.save_calibration_dialog():
+            if answer and not self.save_calibration_dialog(name):
                 return
         self.running = False
         for source in self.source_controls.values():
@@ -1253,7 +1260,7 @@ class CalibrationWindow:
             )
             return
         self._detector().points.append(CalibrationPoint(wl, power, voltage, path, linewidth, gain))
-        self.app.calibration_dirty = True
+        self.app.calibration_dirty[name] = True
         self.ent_power.delete(0, tk.END)
         self.ent_voltage.delete(0, tk.END)
         self.refresh()
@@ -1264,7 +1271,7 @@ class CalibrationWindow:
         for i in idx:
             del det.points[i]
         if idx:
-            self.app.calibration_dirty = True
+            self.app.calibration_dirty[self.var_detector.get()] = True
         self.refresh()
 
     def refresh(self) -> None:
