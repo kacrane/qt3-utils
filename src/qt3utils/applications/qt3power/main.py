@@ -16,9 +16,11 @@ from qt3utils.applications.qt3power.calibration import (
     STATUS_DEFAULT,
     STATUS_OLDER,
     STATUS_WRONG_OPTICS,
+    calibration_optics,
     calibration_status,
     default_calibration_filename,
     newest_calibration_file,
+    optics_label,
     scan_calibration_files,
     CalibrationPoint,
     DetectorCalibration,
@@ -538,6 +540,7 @@ class PowerMonitorApp:
             update_settings({"path": self.path_model.installed})
         except OSError:
             pass  # remembering the optics is a convenience; don't block on it
+        self._load_newest_calibration_for_installed_optics()
         self._refresh_conversion_display()
         if self.calibration_window is not None:
             self.calibration_window.refresh()
@@ -813,9 +816,15 @@ class PowerMonitorApp:
         return scan_calibration_files(folders)
 
     def _load_newest_calibration_for_installed_optics(self) -> None:
-        """At startup: for each detector, load the newest saved calibration measured with the installed optics."""
+        """For each detector, load the newest saved calibration measured with the installed optics.
+
+        Runs at startup and when the optics change. A detector with unsaved points, or with no
+        file for these optics, keeps its current calibration (rescaled to the new optics).
+        """
         library = self._calibration_library()
         for name in DETECTOR_NAMES:
+            if self.calibration_dirty[name]:
+                continue
             info = newest_calibration_file(library, name, self.path_model.installed)
             if info is None:
                 continue
@@ -1261,7 +1270,22 @@ class CalibrationWindow:
                 parent=self.win,
             )
             return
-        self._detector().points.append(CalibrationPoint(wl, power, voltage, path, linewidth, gain))
+        det = self._detector()
+        if det.points and calibration_optics(det) != [optics_label(path)]:
+            answer = messagebox.askyesnocancel(
+                "Add Point",
+                f"The {name} calibration in use was measured with {'; '.join(calibration_optics(det))}, "
+                f"but {optics_label(path)} is installed.\n\n"
+                f"Yes: start a new {name} calibration for {optics_label(path)} (saved files are not changed).\n"
+                "No: add this point to the current calibration (mixed optics).",
+                parent=self.win,
+            )
+            if answer is None:
+                return
+            if answer:
+                self.app._apply_loaded_calibration(name, DetectorCalibration(name), None)
+                det = self._detector()
+        det.points.append(CalibrationPoint(wl, power, voltage, path, linewidth, gain))
         self.app.calibration_dirty[name] = True
         self.ent_power.delete(0, tk.END)
         self.ent_voltage.delete(0, tk.END)
