@@ -425,7 +425,6 @@ class PowerMonitorApp:
             text="Start",
             width=10,
             command=self.start_monitoring,
-            state="disabled",
             bg="green",
             fg="white",
         )
@@ -492,7 +491,7 @@ class PowerMonitorApp:
         except Exception as e:
             self.detector_ctrl = None
             self.lbl_status.config(text="DAQ: Error", fg="red")
-            self.btn_start.config(state="disabled")
+            self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
             messagebox.showerror("DAQ Error", str(e))
 
@@ -934,11 +933,13 @@ class PowerMonitorApp:
             self.lbl_pda100a2_voltage.config(fg="black")
 
     def start_monitoring(self) -> None:
-        if self.detector_ctrl is None:
-            messagebox.showerror("Error", "Initialize DAQ before starting monitoring.")
-            return
         if self.running:
             return
+        if self.detector_ctrl is None:
+            # Start initializes the DAQ itself; init_daq shows any error (or the Santec-busy warning).
+            self.init_daq()
+            if self.detector_ctrl is None:
+                return
 
         self.running = True
         self.btn_start.config(state="disabled")
@@ -949,7 +950,7 @@ class PowerMonitorApp:
     def stop_monitoring(self) -> None:
         self.running = False
         self._set_power_widgets_paused(False)
-        self.btn_start.config(state="normal" if self.detector_ctrl else "disabled")
+        self.btn_start.config(state="normal")
         self.btn_stop.config(state="disabled")
         self.lbl_run_status.config(text="Monitor: Stopped")
 
@@ -977,6 +978,7 @@ class PowerMonitorApp:
         except Exception as e:
             # Stop monitoring on error to avoid spamming the DAQ.
             self.running = False
+            self.detector_ctrl = None  # next Start re-initializes the DAQ
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
             self.lbl_run_status.config(text="Monitor: Error")
