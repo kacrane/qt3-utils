@@ -154,6 +154,7 @@ class PowerMonitorApp:
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
         self.calibration_path: Optional[Path] = None
+        self.calibration_dirty = False  # points added/deleted since last save or load
         self.calibration_window: Optional["CalibrationWindow"] = None
         self.last_voltages: Optional[Tuple[float, float]] = None
 
@@ -437,7 +438,8 @@ class PowerMonitorApp:
     def _refresh_conversion_display(self) -> None:
         if any(d.is_calibrated for d in self.detectors.values()):
             src = self.calibration_path.name if self.calibration_path is not None else "unsaved points"
-            self.lbl_cal_source.config(text=f"Using calibration: {src}")
+            unsaved = " (unsaved changes)" if self.calibration_dirty and self.calibration_path is not None else ""
+            self.lbl_cal_source.config(text=f"Using calibration: {src}{unsaved}")
         else:
             self.lbl_cal_source.config(text="Using Thorlabs responsivity curves")
         if self.last_voltages is not None:
@@ -446,8 +448,19 @@ class PowerMonitorApp:
     def _apply_loaded_calibrations(self, loaded: Dict[str, DetectorCalibration]) -> None:
         for name in DETECTOR_NAMES:
             self.detectors[name] = loaded.get(name, DetectorCalibration(name))
+        self.calibration_dirty = False
+
+    def _confirm_discard_unsaved(self, action: str) -> bool:
+        if not self.calibration_dirty:
+            return True
+        return messagebox.askyesno(
+            "Unsaved calibration",
+            f"You have unsaved calibration points. {action} anyway and discard them?",
+        )
 
     def load_calibration_dialog(self) -> None:
+        if not self._confirm_discard_unsaved("Load a calibration"):
+            return
         path = filedialog.askopenfilename(
             title="Load qt3power calibration",
             initialdir=str(DEFAULT_CALIBRATION_PATH.parent),
@@ -465,7 +478,8 @@ class PowerMonitorApp:
         if self.calibration_window is not None:
             self.calibration_window.refresh()
 
-    def save_calibration_dialog(self) -> None:
+    def save_calibration_dialog(self) -> bool:
+        """Returns True if the calibration was saved."""
         path = filedialog.asksaveasfilename(
             title="Save qt3power calibration",
             initialdir=str(DEFAULT_CALIBRATION_PATH.parent),
@@ -474,19 +488,21 @@ class PowerMonitorApp:
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
         if not path:
-            return
+            return False
         try:
             save_calibrations(path, self.detectors)
         except Exception as e:
             messagebox.showerror("Calibration", f"Could not save {path}:\n{e}")
-            return
+            return False
         self.calibration_path = Path(path)
+        self.calibration_dirty = False
         self._refresh_conversion_display()
         if Path(path).expanduser().resolve() != DEFAULT_CALIBRATION_PATH.resolve():
             messagebox.showinfo(
                 "Calibration saved",
                 f"Saved to {path}.\nOnly {DEFAULT_CALIBRATION_PATH} is loaded automatically at startup.",
             )
+        return True
 
     def clear_calibration(self) -> None:
         if any(d.is_calibrated for d in self.detectors.values()):
@@ -498,6 +514,7 @@ class PowerMonitorApp:
                 return
         self.detectors = {name: DetectorCalibration(name) for name in DETECTOR_NAMES}
         self.calibration_path = None
+        self.calibration_dirty = False
         self._refresh_conversion_display()
         if self.calibration_window is not None:
             self.calibration_window.refresh()
@@ -586,6 +603,15 @@ class PowerMonitorApp:
 
     def on_closing(self) -> None:
         """Cleanly stop monitoring and close the window."""
+        if self.calibration_dirty:
+            answer = messagebox.askyesnocancel(
+                "Unsaved calibration",
+                "You have unsaved calibration points. Save them before closing?",
+            )
+            if answer is None:
+                return
+            if answer and not self.save_calibration_dialog():
+                return
         self.running = False
         # No persistent DAQ task is kept open in this minimal app, so nothing to close.
         self.root.destroy()
@@ -686,6 +712,7 @@ class CalibrationWindow:
             messagebox.showerror("Add Point", f"Check wavelength, power and voltage: {e}", parent=self.win)
             return
         self._detector().points.append(CalibrationPoint(wl, power, voltage))
+        self.app.calibration_dirty = True
         self.ent_power.delete(0, tk.END)
         self.ent_voltage.delete(0, tk.END)
         self.refresh()
@@ -695,6 +722,8 @@ class CalibrationWindow:
         idx = sorted((int(i) for i in self.tree.selection()), reverse=True)
         for i in idx:
             del det.points[i]
+        if idx:
+            self.app.calibration_dirty = True
         self.refresh()
 
     def refresh(self) -> None:
