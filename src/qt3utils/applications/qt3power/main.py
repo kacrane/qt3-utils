@@ -58,6 +58,8 @@ DEFAULT_BURST_RATE_HZ = 9973.0
 SUPERK_DETECTOR = "PDA100A2"  # NKT SuperK CHROMATUNE
 SANTEC_DETECTOR = "PDA50B2"  # Santec TSL lasers via qt3santec's switch
 SOURCE_AUTO_INTERVAL_MS = 5000
+# Only broadband sources get a linewidth box; the others are narrow lines (linewidth 0).
+LINEWIDTH_DETECTORS = (SUPERK_DETECTOR,)
 
 DETECTOR_MAX_OUTPUT_V = {"PDA50B2": 10.0, "PDA100A2": 10.0}
 SATURATION_FRACTION = 0.95
@@ -73,7 +75,9 @@ STATUS_COLORS = {
 _STALE_LOCK_TOOLTIP = (
     "Only use this when qt3santec is not scanning but the busy marker was left behind "
     "(e.g. after a crash or force-close). Do not enable during an active Santec sweep—"
-    "both apps may touch the same DAQ channels and cause errors."
+    "both apps may touch the same DAQ channels and cause errors. "
+    "While reads continue through a sweep, the PDA50B2 wavelength box is not updated, "
+    "so its power is converted at the pre-sweep wavelength."
 )
 
 
@@ -221,7 +225,9 @@ class PowerMonitorApp:
         self.wavelength_entries: Dict[str, tk.Entry] = {}
         saved_lw = load_settings().get("linewidth_nm", {})
         self.linewidths: Dict[str, float] = {
-            name: float(saved_lw.get(name, 0.0)) if isinstance(saved_lw, dict) else 0.0
+            name: float(saved_lw.get(name, 0.0))
+            if isinstance(saved_lw, dict) and name in LINEWIDTH_DETECTORS
+            else 0.0
             for name in DETECTOR_NAMES
         }
         self.linewidth_entries: Dict[str, tk.Entry] = {}
@@ -561,6 +567,8 @@ class PowerMonitorApp:
         ent.bind("<FocusOut>", lambda _e: self.set_wavelength(name))
         self.wavelength_entries[name] = ent
 
+        if name not in LINEWIDTH_DETECTORS:
+            return
         tk.Label(parent, text="Linewidth (nm):").grid(row=row + 1, column=2, sticky="ne", padx=5)
         lw = tk.Entry(parent, width=8)
         lw.grid(row=row + 1, column=3, sticky="nw", padx=5)
@@ -588,7 +596,7 @@ class PowerMonitorApp:
 
     def _prepare_santec_read(self) -> list:
         if santec_daq_busy() and not self.var_ignore_santec_lock.get():
-            raise RuntimeError("qt3santec is sweeping; the wavelength is changing. Try again after the sweep.")
+            raise SourceBusy("qt3santec is sweeping; the wavelength is changing. Try again after the sweep.")
         return santec_laser_config()
 
     @staticmethod
@@ -597,7 +605,7 @@ class PowerMonitorApp:
         sweeping = ", SWEEPING" if r.sweeping else ""
         return SourceReading(
             wavelength_nm=r.wavelength_nm,
-            linewidth_nm=0.0,  # tunable CW laser: narrow line
+            linewidth_nm=None,  # tunable CW laser: narrow line, no linewidth box
             status=f"{r.ip}{sweeping}",
             detail=f"Santec (last read): {r.wavelength_nm:g} nm from {r.ip}{sweeping}",
         )
@@ -605,9 +613,9 @@ class PowerMonitorApp:
     def apply_source_reading(self, name: str, reading: "SourceReading") -> None:
         for entry, value, setter in (
             (self.wavelength_entries[name], reading.wavelength_nm, self.set_wavelength),
-            (self.linewidth_entries[name], reading.linewidth_nm, self.set_linewidth),
+            (self.linewidth_entries.get(name), reading.linewidth_nm, self.set_linewidth),
         ):
-            if value is None:
+            if value is None or entry is None:
                 continue
             entry.delete(0, tk.END)
             entry.insert(0, f"{value:g}")
@@ -978,6 +986,10 @@ class PowerMonitorApp:
         self.root.destroy()
 
 
+class SourceBusy(RuntimeError):
+    """The source can't be read right now but will be later (e.g. during a sweep)."""
+
+
 @dataclass
 class SourceReading:
     wavelength_nm: float
@@ -1025,6 +1037,12 @@ class LaserSourceControls:
             return
         try:
             arg = self.prepare()
+        except SourceBusy as e:
+            # Temporary (e.g. a sweep): Auto just waits for the next tick.
+            self.lbl.config(text=f"Waiting: sweep running\n{time.strftime('%H:%M:%S')}")
+            if manual:
+                messagebox.showinfo(f"Read {self.title}", str(e))
+            return
         except Exception as e:
             self._failed(e, manual)
             return
@@ -1113,7 +1131,7 @@ class CalibrationWindow:
         tk.Label(frm, text="Linewidth (nm):").grid(row=1, column=2, sticky="e")
         self.ent_lw = tk.Entry(frm, width=6)
         self.ent_lw.grid(row=1, column=3, sticky="w", padx=3)
-        self.ent_lw.insert(0, f"{app.linewidths[DETECTOR_NAMES[0]]:g}")
+        self._update_linewidth_field()
 
         tk.Label(frm, text="Power at objective (mW):").grid(row=2, column=0, sticky="e")
         self.ent_power = tk.Entry(frm, width=10)
@@ -1149,11 +1167,18 @@ class CalibrationWindow:
 
         self.refresh()
 
+    def _update_linewidth_field(self) -> None:
+        name = self.var_detector.get()
+        self.ent_lw.config(state="normal")
+        self.ent_lw.delete(0, tk.END)
+        self.ent_lw.insert(0, f"{self.app.linewidths[name]:g}")
+        if name not in LINEWIDTH_DETECTORS:
+            self.ent_lw.config(state="disabled")
+
     def _on_detector_change(self) -> None:
         self.ent_wl.delete(0, tk.END)
         self.ent_wl.insert(0, f"{self.app.wavelengths[self.var_detector.get()]:g}")
-        self.ent_lw.delete(0, tk.END)
-        self.ent_lw.insert(0, f"{self.app.linewidths[self.var_detector.get()]:g}")
+        self._update_linewidth_field()
         self.refresh()
 
     def _detector(self) -> DetectorCalibration:
