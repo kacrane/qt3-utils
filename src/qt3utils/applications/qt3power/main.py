@@ -1,11 +1,21 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog, ttk
 import time
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import nidaqmx
 
 from qt3utils.applications.qt3_daq_busy_marker import santec_daq_busy
+from qt3utils.applications.qt3power.calibration import (
+    DEFAULT_CALIBRATION_PATH,
+    CalibrationPoint,
+    DetectorCalibration,
+    load_calibrations,
+    save_calibrations,
+)
+
+DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
 
 _STALE_LOCK_TOOLTIP = (
     "Only use this when qt3santec is not scanning but the busy marker was left behind "
@@ -116,14 +126,14 @@ class PhotodetectorController:
 
 class PowerMonitorApp:
     """
-    Simple GUI that shows power in MW for two photodetectors read via NI DAQ.
+    Simple GUI that shows power in mW for two photodetectors read via NI DAQ.
 
-    The conversion is based on a fixed calibration:
-        power_MW = voltage_V / 7.0
-    assuming the photodetector gain is fixed and never changed.
+    The conversion is wavelength dependent (see calibration.py):
+        power_mW = (voltage_V - offset_V) / k(wavelength)
+    By default k = 7.0 V/mW at 1550 nm (0.7 V -> 0.1 mW), scaled by the
+    detector's responsivity curve at other wavelengths. A measured calibration,
+    if loaded, overrides the default. Assumes the detector gain is never changed.
     """
-
-    VOLT_TO_MW_FACTOR = 7.0  # V : MW (e.g., 0.7 V -> 0.1 MW)
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -135,7 +145,26 @@ class PowerMonitorApp:
         self.update_interval_ms = 200  # ~5 Hz polling
         self.var_ignore_santec_lock = tk.BooleanVar(value=False)
 
+        self.wavelength_nm = 1550.0
+        self.detectors: Dict[str, DetectorCalibration] = {
+            name: DetectorCalibration(name) for name in DETECTOR_NAMES
+        }
+        self.calibration_path: Optional[Path] = None
+        self.calibration_window: Optional["CalibrationWindow"] = None
+        self.last_voltages: Optional[Tuple[float, float]] = None
+
         self._build_gui()
+
+        if DEFAULT_CALIBRATION_PATH.exists():
+            try:
+                self._apply_loaded_calibrations(load_calibrations(DEFAULT_CALIBRATION_PATH))
+                self.calibration_path = DEFAULT_CALIBRATION_PATH
+            except Exception as e:
+                messagebox.showwarning(
+                    "Calibration",
+                    f"Could not load {DEFAULT_CALIBRATION_PATH}:\n{e}\nUsing default responsivity curve.",
+                )
+        self._refresh_conversion_display()
 
     def _build_gui(self) -> None:
         main_frame = tk.Frame(self.root)
@@ -174,12 +203,34 @@ class PowerMonitorApp:
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
 
+        # Wavelength and calibration
+        wl_frame = tk.LabelFrame(main_frame, text="Wavelength & Calibration")
+        wl_frame.pack(fill="x", pady=5)
+
+        tk.Label(wl_frame, text="Wavelength (nm):").grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        self.ent_wavelength = tk.Entry(wl_frame, width=10)
+        self.ent_wavelength.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        self.ent_wavelength.insert(0, f"{self.wavelength_nm:g}")
+        self.ent_wavelength.bind("<Return>", lambda _e: self.set_wavelength())
+        self.ent_wavelength.bind("<FocusOut>", lambda _e: self.set_wavelength())
+        tk.Button(wl_frame, text="Set", command=self.set_wavelength).grid(row=0, column=2, padx=5, pady=5)
+
+        btn_frame = tk.Frame(wl_frame)
+        btn_frame.grid(row=0, column=3, columnspan=3, sticky="w", padx=5)
+        tk.Button(btn_frame, text="Calibrate...", command=self.open_calibration_window).pack(side="left", padx=2)
+        tk.Button(btn_frame, text="Load Cal...", command=self.load_calibration_dialog).pack(side="left", padx=2)
+        tk.Button(btn_frame, text="Save Cal...", command=self.save_calibration_dialog).pack(side="left", padx=2)
+        tk.Button(btn_frame, text="Use Default Curve", command=self.clear_calibration).pack(side="left", padx=2)
+
+        self.lbl_conversion = tk.Label(wl_frame, text="", justify="left", font=("Arial", 9))
+        self.lbl_conversion.grid(row=1, column=0, columnspan=6, sticky="w", padx=5, pady=2)
+
         # Power display
         display_frame = tk.LabelFrame(main_frame, text="Photodetector Power")
         display_frame.pack(fill="both", expand=True, pady=10)
 
         # PDA50B2
-        tk.Label(display_frame, text="PDA50B2 Power (MW):", font=("Arial", 11, "bold")).grid(
+        tk.Label(display_frame, text="PDA50B2 Power (mW):", font=("Arial", 11, "bold")).grid(
             row=0,
             column=0,
             sticky="e",
@@ -205,7 +256,7 @@ class PowerMonitorApp:
         self.lbl_pda50b2_voltage.grid(row=1, column=1, sticky="w", padx=5, pady=2)
 
         # PDA100A2
-        tk.Label(display_frame, text="PDA100A2 Power (MW):", font=("Arial", 11, "bold")).grid(
+        tk.Label(display_frame, text="PDA100A2 Power (mW):", font=("Arial", 11, "bold")).grid(
             row=2,
             column=0,
             sticky="e",
@@ -301,12 +352,7 @@ class PowerMonitorApp:
                 text=f"DAQ: Initialized ({device}, {ch1}, {ch2})",
                 fg="green",
             )
-            self.lbl_pda50b2_voltage.config(text=f"{v1:.4f}")
-            self.lbl_pda100a2_voltage.config(text=f"{v2:.4f}")
-            p1 = self._voltage_to_mw(v1)
-            p2 = self._voltage_to_mw(v2)
-            self.lbl_pda50b2_power.config(text=f"{p1:.4f}")
-            self.lbl_pda100a2_power.config(text=f"{p2:.4f}")
+            self._show_readings(v1, v2)
 
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
@@ -318,9 +364,140 @@ class PowerMonitorApp:
             self.btn_stop.config(state="disabled")
             messagebox.showerror("DAQ Error", str(e))
 
-    def _voltage_to_mw(self, voltage: float) -> float:
-        """Convert voltage (V) to power (MW) using fixed calibration."""
-        return voltage / self.VOLT_TO_MW_FACTOR
+    def _show_readings(self, v1: float, v2: float) -> None:
+        self.last_voltages = (v1, v2)
+        self.lbl_pda50b2_voltage.config(text=f"{v1:.4f}")
+        self.lbl_pda100a2_voltage.config(text=f"{v2:.4f}")
+        self.lbl_pda50b2_power.config(text=f"{self._voltage_to_mw('PDA50B2', v1):.4f}")
+        self.lbl_pda100a2_power.config(text=f"{self._voltage_to_mw('PDA100A2', v2):.4f}")
+
+    def _voltage_to_mw(self, detector: str, voltage: float) -> float:
+        """Convert voltage (V) to power (mW) at the current wavelength."""
+        return self.detectors[detector].voltage_to_mw(voltage, self.wavelength_nm)
+
+    # ---- Wavelength / calibration ----
+
+    def set_wavelength(self) -> None:
+        text = self.ent_wavelength.get().strip()
+        try:
+            wl = float(text)
+            if wl <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Wavelength", f"Invalid wavelength: {text!r}")
+            self.ent_wavelength.delete(0, tk.END)
+            self.ent_wavelength.insert(0, f"{self.wavelength_nm:g}")
+            return
+        if wl == self.wavelength_nm:
+            return
+        self.wavelength_nm = wl
+        self._refresh_conversion_display()
+
+    def _refresh_conversion_display(self) -> None:
+        wl = self.wavelength_nm
+        lines = []
+        warn = False
+        for name in DETECTOR_NAMES:
+            det = self.detectors[name]
+            k, offset = det.factor_and_offset(wl)
+            if det.is_calibrated:
+                lo, hi = det.calibrated_range()
+                src = f"calibration, {len(det.points)} pts, {lo:g}-{hi:g} nm"
+                if not lo <= wl <= hi:
+                    src += ", EXTRAPOLATED with default curve shape"
+                    warn = True
+            elif det.curve is not None:
+                src = f"default {name} curve, R={det.responsivity(wl):.3f} A/W"
+                if not det.in_curve_range(wl):
+                    src += ", OUTSIDE CURVE RANGE (clamped)"
+                    warn = True
+            else:
+                src = "fixed, no responsivity curve"
+            off = f", offset {offset * 1000:+.2f} mV" if offset else ""
+            lines.append(f"{name}: {k:.4g} V/mW{off}  ({src})")
+        if self.calibration_path is not None:
+            lines.append(f"Calibration file: {self.calibration_path}")
+        self.lbl_conversion.config(text="\n".join(lines), fg="#aa5500" if warn else "black")
+        if self.last_voltages is not None:
+            self._show_readings(*self.last_voltages)
+
+    def _apply_loaded_calibrations(self, loaded: Dict[str, DetectorCalibration]) -> None:
+        for name in DETECTOR_NAMES:
+            self.detectors[name] = loaded.get(name, DetectorCalibration(name))
+
+    def load_calibration_dialog(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Load qt3power calibration",
+            initialdir=str(DEFAULT_CALIBRATION_PATH.parent),
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            self._apply_loaded_calibrations(load_calibrations(path))
+        except Exception as e:
+            messagebox.showerror("Calibration", f"Could not load {path}:\n{e}")
+            return
+        self.calibration_path = Path(path)
+        self._refresh_conversion_display()
+        if self.calibration_window is not None:
+            self.calibration_window.refresh()
+
+    def save_calibration_dialog(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Save qt3power calibration",
+            initialdir=str(DEFAULT_CALIBRATION_PATH.parent),
+            initialfile=DEFAULT_CALIBRATION_PATH.name,
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            save_calibrations(path, self.detectors)
+        except Exception as e:
+            messagebox.showerror("Calibration", f"Could not save {path}:\n{e}")
+            return
+        self.calibration_path = Path(path)
+        self._refresh_conversion_display()
+        if Path(path).expanduser().resolve() != DEFAULT_CALIBRATION_PATH.resolve():
+            messagebox.showinfo(
+                "Calibration saved",
+                f"Saved to {path}.\nOnly {DEFAULT_CALIBRATION_PATH} is loaded automatically at startup.",
+            )
+
+    def clear_calibration(self) -> None:
+        if any(d.is_calibrated for d in self.detectors.values()):
+            if not messagebox.askyesno(
+                "Use default curve",
+                "Discard the measured calibration in memory and use the default responsivity curve?\n"
+                "(Saved files are not deleted.)",
+            ):
+                return
+        self.detectors = {name: DetectorCalibration(name) for name in DETECTOR_NAMES}
+        self.calibration_path = None
+        self._refresh_conversion_display()
+        if self.calibration_window is not None:
+            self.calibration_window.refresh()
+
+    def open_calibration_window(self) -> None:
+        if self.calibration_window is not None:
+            self.calibration_window.win.lift()
+            return
+        self.calibration_window = CalibrationWindow(self)
+
+    def read_average_voltages(self, n_samples: int) -> Tuple[float, float]:
+        """Average n_samples reads of both detectors. Raises RuntimeError if the DAQ is unavailable."""
+        if self.detector_ctrl is None:
+            raise RuntimeError("Initialize DAQ first.")
+        if santec_daq_busy() and not self.var_ignore_santec_lock.get():
+            raise RuntimeError("qt3santec has the DAQ (scan in progress).")
+        v1s, v2s = [], []
+        for _ in range(max(1, n_samples)):
+            v1, v2 = self.detector_ctrl.read_both_detectors()
+            v1s.append(v1)
+            v2s.append(v2)
+        return sum(v1s) / len(v1s), sum(v2s) / len(v2s)
 
     def _set_power_widgets_paused(self, paused: bool) -> None:
         if paused:
@@ -372,13 +549,7 @@ class PowerMonitorApp:
                 self.lbl_run_status.config(text="Monitor: Running")
                 self._set_power_widgets_paused(False)
                 v1, v2 = self.detector_ctrl.read_both_detectors()
-                p1 = self._voltage_to_mw(v1)
-                p2 = self._voltage_to_mw(v2)
-
-                self.lbl_pda50b2_voltage.config(text=f"{v1:.4f}")
-                self.lbl_pda100a2_voltage.config(text=f"{v2:.4f}")
-                self.lbl_pda50b2_power.config(text=f"{p1:.4f}")
-                self.lbl_pda100a2_power.config(text=f"{p2:.4f}")
+                self._show_readings(v1, v2)
 
             self.lbl_status.config(fg="green")
         except Exception as e:
@@ -396,6 +567,133 @@ class PowerMonitorApp:
         self.running = False
         # No persistent DAQ task is kept open in this minimal app, so nothing to close.
         self.root.destroy()
+
+
+class CalibrationWindow:
+    """
+    Record (wavelength, known power, detector voltage) points.
+
+    Workflow: set the laser wavelength, measure its power with a reference power
+    meter, type that power in, press "Read DAQ" to average the detector voltage,
+    then "Add Point". Repeat at several powers and wavelengths. Points take effect
+    in the main window immediately; use Save Cal... to keep them.
+    """
+
+    def __init__(self, app: PowerMonitorApp) -> None:
+        self.app = app
+        self.win = tk.Toplevel(app.root)
+        self.win.title("qt3power Calibration")
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+
+        frm = tk.Frame(self.win)
+        frm.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(frm, text="Detector:").grid(row=0, column=0, sticky="e")
+        self.var_detector = tk.StringVar(value=DETECTOR_NAMES[0])
+        for i, name in enumerate(DETECTOR_NAMES):
+            tk.Radiobutton(
+                frm, text=name, variable=self.var_detector, value=name, command=self.refresh
+            ).grid(row=0, column=1 + i, sticky="w")
+
+        tk.Label(frm, text="Wavelength (nm):").grid(row=1, column=0, sticky="e")
+        self.ent_wl = tk.Entry(frm, width=10)
+        self.ent_wl.grid(row=1, column=1, sticky="w", padx=3, pady=2)
+        self.ent_wl.insert(0, f"{app.wavelength_nm:g}")
+
+        tk.Label(frm, text="Known power (mW):").grid(row=2, column=0, sticky="e")
+        self.ent_power = tk.Entry(frm, width=10)
+        self.ent_power.grid(row=2, column=1, sticky="w", padx=3, pady=2)
+
+        tk.Label(frm, text="Voltage (V):").grid(row=3, column=0, sticky="e")
+        self.ent_voltage = tk.Entry(frm, width=10)
+        self.ent_voltage.grid(row=3, column=1, sticky="w", padx=3, pady=2)
+        tk.Button(frm, text="Read DAQ", command=self.read_daq).grid(row=3, column=2, padx=3)
+        tk.Label(frm, text="Samples:").grid(row=3, column=3, sticky="e")
+        self.ent_samples = tk.Entry(frm, width=5)
+        self.ent_samples.grid(row=3, column=4, sticky="w", padx=3)
+        self.ent_samples.insert(0, "20")
+
+        tk.Button(frm, text="Add Point", command=self.add_point, bg="#ccffcc").grid(
+            row=4, column=1, sticky="w", padx=3, pady=5
+        )
+        tk.Button(frm, text="Delete Selected", command=self.delete_selected).grid(
+            row=4, column=2, columnspan=2, sticky="w", padx=3, pady=5
+        )
+
+        cols = ("wl", "power", "voltage", "k")
+        self.tree = ttk.Treeview(self.win, columns=cols, show="headings", height=8)
+        for c, title, w in zip(
+            cols, ("Wavelength (nm)", "Power (mW)", "Voltage (V)", "V/mW"), (110, 90, 90, 80)
+        ):
+            self.tree.heading(c, text=title)
+            self.tree.column(c, width=w, anchor="center")
+        self.tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.lbl_fit = tk.Label(self.win, text="", justify="left", font=("Courier", 9))
+        self.lbl_fit.pack(fill="x", padx=10, pady=5)
+
+        self.refresh()
+
+    def _detector(self) -> DetectorCalibration:
+        return self.app.detectors[self.var_detector.get()]
+
+    def read_daq(self) -> None:
+        try:
+            n = int(self.ent_samples.get())
+            v1, v2 = self.app.read_average_voltages(n)
+        except Exception as e:
+            messagebox.showerror("Read DAQ", str(e), parent=self.win)
+            return
+        v = v1 if self.var_detector.get() == "PDA50B2" else v2
+        self.ent_voltage.delete(0, tk.END)
+        self.ent_voltage.insert(0, f"{v:.5f}")
+
+    def add_point(self) -> None:
+        try:
+            wl = float(self.ent_wl.get())
+            power = float(self.ent_power.get())
+            voltage = float(self.ent_voltage.get())
+            if wl <= 0 or power <= 0:
+                raise ValueError("wavelength and power must be > 0")
+        except ValueError as e:
+            messagebox.showerror("Add Point", f"Check wavelength, power and voltage: {e}", parent=self.win)
+            return
+        self._detector().points.append(CalibrationPoint(wl, power, voltage))
+        self.ent_power.delete(0, tk.END)
+        self.ent_voltage.delete(0, tk.END)
+        self.refresh()
+
+    def delete_selected(self) -> None:
+        det = self._detector()
+        idx = sorted((int(i) for i in self.tree.selection()), reverse=True)
+        for i in idx:
+            del det.points[i]
+        self.refresh()
+
+    def refresh(self) -> None:
+        det = self._detector()
+        self.tree.delete(*self.tree.get_children())
+        for i, p in enumerate(det.points):
+            k = p.voltage_v / p.power_mw if p.power_mw else float("nan")
+            self.tree.insert(
+                "", "end", iid=str(i),
+                values=(f"{p.wavelength_nm:g}", f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}"),
+            )
+        lines = ["Fit per wavelength (V = k*P + offset):"]
+        for wl, k, offset, n in det.fit_by_wavelength():
+            ratio = k / det.default_factor(wl)
+            lines.append(
+                f"  {wl:7.1f} nm  k={k:8.4g} V/mW  offset={offset * 1000:+7.2f} mV"
+                f"  n={n}  vs default curve x{ratio:.3f}"
+            )
+        if len(lines) == 1:
+            lines.append("  (no points: using default curve)")
+        self.lbl_fit.config(text="\n".join(lines))
+        self.app._refresh_conversion_display()
+
+    def close(self) -> None:
+        self.app.calibration_window = None
+        self.win.destroy()
 
 
 def main() -> None:
