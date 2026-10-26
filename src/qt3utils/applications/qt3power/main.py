@@ -69,6 +69,15 @@ DETECTOR_MAX_OUTPUT_V = {"PDA50B2": 10.0, "PDA100A2": 10.0}
 SATURATION_FRACTION = 0.95
 
 # Calibration status text colors (yellow darkened to stay readable on grey).
+# Reading fonts. Double-clicking a power/voltage reading switches it between regular and large.
+REGULAR_READING_FONTS = {"power": ("Arial", 18, "bold"), "voltage": ("Arial", 14)}
+LARGE_READING_FONT = ("Arial", 40, "bold")
+DEFAULT_LARGE_READINGS = {
+    "PDA50B2_power": False,
+    "PDA50B2_voltage": True,
+    "PDA100A2_power": False,
+    "PDA100A2_voltage": False,
+}
 STATUS_COLORS = {
     STATUS_CURRENT: "#008800",
     STATUS_OLDER: "#b08d00",
@@ -334,87 +343,56 @@ class PowerMonitorApp:
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
 
-        # Power display
-        display_frame = tk.LabelFrame(main_frame, text="Photodetector Power")
-        display_frame.pack(fill="both", expand=True, pady=10)
-
-        # PDA50B2
-        tk.Label(display_frame, text="PDA50B2 Power (mW):", font=("Arial", 11, "bold")).grid(
-            row=0,
-            column=0,
-            sticky="e",
-            padx=5,
-            pady=5,
-        )
-        self.lbl_pda50b2_power = tk.Label(
-            display_frame,
-            text="--",
-            font=("Arial", 18, "bold"),
-            fg="#0044aa",
-        )
-        self.lbl_pda50b2_power.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        self._build_wavelength_entry(display_frame, "PDA50B2", row=0)
-        self.source_controls[SANTEC_DETECTOR] = LaserSourceControls(
-            self, display_frame, row=0, detector=SANTEC_DETECTOR, title="Santec",
-            prepare=self._prepare_santec_read, read=self._read_santec,
-        )
-
-        tk.Label(display_frame, text="Voltage (V):").grid(
-            row=1,
-            column=0,
-            sticky="e",
-            padx=5,
-            pady=2,
-        )
-        self.lbl_pda50b2_voltage = tk.Label(display_frame, text="--",font=("Arial", 40, "bold"))
-        self.lbl_pda50b2_voltage.grid(row=1, column=1, sticky="w", padx=5, pady=2)
-        self.lbl_pda50b2_sat = tk.Label(display_frame, text="", fg="#cc0000", font=("Arial", 10, "bold"))
-        self.lbl_pda50b2_sat.grid(row=0, column=1, sticky="e", padx=5)
-
-        # PDA100A2
-        tk.Label(display_frame, text="PDA100A2 Power (mW):", font=("Arial", 11, "bold")).grid(
-            row=2,
-            column=0,
-            sticky="e",
-            padx=5,
-            pady=10,
-        )
-        self.lbl_pda100a2_power = tk.Label(
-            display_frame,
-            text="--",
-            font=("Arial", 18, "bold"),
-            fg="#006600",
-        )
-        self.lbl_pda100a2_power.grid(row=2, column=1, sticky="w", padx=5, pady=10)
-        self._build_wavelength_entry(display_frame, "PDA100A2", row=2)
-        self.source_controls[SUPERK_DETECTOR] = LaserSourceControls(
-            self, display_frame, row=2, detector=SUPERK_DETECTOR, title="SuperK",
-            prepare=lambda: dict(self.superk_connection), read=self._read_superk,
-            open_settings=self.open_superk_settings,
-        )
-
-        tk.Label(display_frame, text="Voltage (V):").grid(
-            row=3,
-            column=0,
-            sticky="e",
-            padx=5,
-            pady=2,
-        )
-        self.lbl_pda100a2_voltage = tk.Label(display_frame, text="--")
-        self.lbl_pda100a2_voltage.grid(row=3, column=1, sticky="w", padx=5, pady=2)
-        self.lbl_pda100a2_sat = tk.Label(display_frame, text="", fg="#cc0000", font=("Arial", 10, "bold"))
-        self.lbl_pda100a2_sat.grid(row=2, column=1, sticky="e", padx=5)
-
-        for child in display_frame.winfo_children():
-            child.grid_configure(padx=5, pady=3)
-        display_frame.grid_columnconfigure(1, weight=1)
-
-        for name, labels in (
-            ("PDA50B2", (self.lbl_pda50b2_power, self.lbl_pda50b2_voltage)),
-            ("PDA100A2", (self.lbl_pda100a2_power, self.lbl_pda100a2_voltage)),
+        # Power display: one labeled subsection per detector
+        self.reading_labels: Dict[str, tk.Label] = {}
+        sat_labels: Dict[str, tk.Label] = {}
+        saved_large = load_settings().get("large_readings", {})
+        self.large_readings: Dict[str, bool] = {
+            key: bool(saved_large.get(key, default)) for key, default in DEFAULT_LARGE_READINGS.items()
+        }
+        for name, source, title, color, prepare, read, settings in (
+            ("PDA50B2", SANTEC_DETECTOR, "Santec", "#0044aa",
+             self._prepare_santec_read, self._read_santec, None),
+            ("PDA100A2", SUPERK_DETECTOR, "SuperK", "#006600",
+             lambda: dict(self.superk_connection), self._read_superk, self.open_superk_settings),
         ):
-            for lbl in labels:
-                _attach_tooltip(lbl, lambda n=name: self._conversion_text(n))
+            frame = tk.LabelFrame(main_frame, text=f"{name} ({title})", font=("Arial", 10, "bold"))
+            frame.pack(fill="x", pady=5)
+
+            tk.Label(frame, text="Excitation Power (mW):", font=("Arial", 11, "bold")).grid(
+                row=0, column=0, sticky="e"
+            )
+            power = tk.Label(frame, text="--", fg=color)
+            power.grid(row=0, column=1, sticky="w")
+            tk.Label(frame, text="Voltage (V):").grid(row=1, column=0, sticky="e")
+            voltage = tk.Label(frame, text="--")
+            voltage.grid(row=1, column=1, sticky="w")
+            sat = tk.Label(frame, text="", fg="#cc0000", font=("Arial", 10, "bold"))
+            sat.grid(row=1, column=2, sticky="w")
+            sat_labels[name] = sat
+
+            self._build_wavelength_entry(frame, name, row=0)
+            self.source_controls[source] = LaserSourceControls(
+                self, frame, row=0, detector=source, title=title,
+                prepare=prepare, read=read, open_settings=settings,
+            )
+            for child in frame.winfo_children():
+                child.grid_configure(padx=5, pady=3)
+            frame.grid_columnconfigure(1, weight=1)
+
+            for kind, lbl in (("power", power), ("voltage", voltage)):
+                key = f"{name}_{kind}"
+                self.reading_labels[key] = lbl
+                self._apply_reading_size(key)
+                lbl.bind("<Double-Button-1>", lambda _e, k=key: self.toggle_reading_size(k))
+                _attach_tooltip(lbl, lambda n=name: self._conversion_text(n) + "\n\nDouble-click to resize.")
+
+        self.lbl_pda50b2_power = self.reading_labels["PDA50B2_power"]
+        self.lbl_pda50b2_voltage = self.reading_labels["PDA50B2_voltage"]
+        self.lbl_pda100a2_power = self.reading_labels["PDA100A2_power"]
+        self.lbl_pda100a2_voltage = self.reading_labels["PDA100A2_voltage"]
+        self.lbl_pda50b2_sat = sat_labels["PDA50B2"]
+        self.lbl_pda100a2_sat = sat_labels["PDA100A2"]
 
         # Controls
         ctrl_frame = tk.Frame(main_frame)
@@ -543,12 +521,24 @@ class PowerMonitorApp:
         if self.calibration_window is not None:
             self.calibration_window.refresh()
 
+    # ---- Reading size (double-click toggles; large is for reading across the room while aligning) ----
+
+    def _apply_reading_size(self, key: str) -> None:
+        kind = key.rsplit("_", 1)[1]
+        font = LARGE_READING_FONT if self.large_readings[key] else REGULAR_READING_FONTS[kind]
+        self.reading_labels[key].config(font=font)
+
+    def toggle_reading_size(self, key: str) -> None:
+        self.large_readings[key] = not self.large_readings[key]
+        self._apply_reading_size(key)
+        update_settings({"large_readings": self.large_readings})
+
     # ---- Wavelength / calibration ----
 
     def _build_wavelength_entry(self, parent: tk.Widget, name: str, row: int) -> None:
-        tk.Label(parent, text="Wavelength (nm):").grid(row=row, column=2, sticky="e", padx=5)
+        tk.Label(parent, text="Wavelength (nm):").grid(row=row, column=3, sticky="e", padx=5)
         ent = tk.Entry(parent, width=8)
-        ent.grid(row=row, column=3, sticky="w", padx=5)
+        ent.grid(row=row, column=4, sticky="w", padx=5)
         ent.insert(0, f"{self.wavelengths[name]:g}")
         ent.bind("<Return>", lambda _e: self.set_wavelength(name))
         ent.bind("<FocusOut>", lambda _e: self.set_wavelength(name))
@@ -556,9 +546,9 @@ class PowerMonitorApp:
 
         if name not in LINEWIDTH_DETECTORS:
             return
-        tk.Label(parent, text="Linewidth (nm):").grid(row=row + 1, column=2, sticky="ne", padx=5)
+        tk.Label(parent, text="Linewidth (nm):").grid(row=row + 1, column=3, sticky="e", padx=5)
         lw = tk.Entry(parent, width=8)
-        lw.grid(row=row + 1, column=3, sticky="nw", padx=5)
+        lw.grid(row=row + 1, column=4, sticky="w", padx=5)
         lw.insert(0, f"{self.linewidths[name]:g}")
         lw.bind("<Return>", lambda _e: self.set_linewidth(name))
         lw.bind("<FocusOut>", lambda _e: self.set_linewidth(name))
@@ -1009,7 +999,7 @@ class LaserSourceControls:
         self.var_auto = tk.BooleanVar(value=False)
 
         frm = tk.Frame(parent)
-        frm.grid(row=row, column=4, rowspan=2, sticky="nw", padx=5)
+        frm.grid(row=row, column=5, rowspan=2, sticky="nw", padx=5)
         top = tk.Frame(frm)
         top.pack(anchor="w")
         tk.Button(top, text=f"Read {title}", command=lambda: self.read(manual=True)).pack(side="left")
