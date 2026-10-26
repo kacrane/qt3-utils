@@ -72,9 +72,10 @@ SATURATION_FRACTION = 0.95
 # Reading fonts. Double-clicking a power/voltage reading switches it between regular and large.
 REGULAR_READING_FONTS = {"power": ("Arial", 18, "bold"), "voltage": ("Arial", 14)}
 LARGE_READING_FONT = ("Arial", 40, "bold")
+SOURCE_COLUMN_WIDTH = 130  # px; keeps the wavelength boxes aligned between detector boxes
 DEFAULT_LARGE_READINGS = {
     "PDA50B2_power": False,
-    "PDA50B2_voltage": True,
+    "PDA50B2_voltage": False,
     "PDA100A2_power": False,
     "PDA100A2_voltage": False,
 }
@@ -379,6 +380,7 @@ class PowerMonitorApp:
             for child in frame.winfo_children():
                 child.grid_configure(padx=5, pady=3)
             frame.grid_columnconfigure(1, weight=1)
+            frame.grid_columnconfigure(5, minsize=SOURCE_COLUMN_WIDTH)
 
             for kind, lbl in (("power", power), ("voltage", voltage)):
                 key = f"{name}_{kind}"
@@ -1000,12 +1002,12 @@ class LaserSourceControls:
 
         frm = tk.Frame(parent)
         frm.grid(row=row, column=5, rowspan=2, sticky="nw", padx=5)
-        top = tk.Frame(frm)
-        top.pack(anchor="w")
-        tk.Button(top, text=f"Read {title}", command=lambda: self.read(manual=True)).pack(side="left")
+        tk.Button(frm, text=f"Read {title}", command=lambda: self.read(manual=True)).pack(anchor="w")
+        row2 = tk.Frame(frm)
+        row2.pack(anchor="w")
+        tk.Checkbutton(row2, text="Auto", variable=self.var_auto, command=self._on_auto_toggle).pack(side="left")
         if open_settings is not None:
-            tk.Button(top, text="...", width=2, command=open_settings).pack(side="left", padx=2)
-        tk.Checkbutton(frm, text="Auto", variable=self.var_auto, command=self._on_auto_toggle).pack(anchor="w")
+            tk.Button(row2, text="...", width=2, command=open_settings).pack(side="left", padx=2)
         self.lbl = tk.Label(frm, text="", fg="#555555", font=("Arial", 8), justify="left")
         self.lbl.pack(anchor="w")
 
