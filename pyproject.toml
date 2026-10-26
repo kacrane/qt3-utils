@@ -78,4 +78,5 @@ qt3test-snspd = "qt3utils.tools.test_snspd_connection:main"
 "qt3utils.applications.qt3scan.config_files" = ["*.yaml"]
 "qt3utils.applications.qt3scope.config_files" = ["*.yaml"]
 "qt3utils.applications.qt3mirror.config_files" = ["*.yaml"]
+"qt3utils.applications.qt3power" = ["optics/*.csv"]
 "qt3utils.config_files" = ["*.yaml", "*.dll"]

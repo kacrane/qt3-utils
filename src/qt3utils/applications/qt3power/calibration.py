@@ -19,6 +19,14 @@ Calibration model (measured points loaded):
     used between and beyond them, and a single calibration point rescales the
     whole curve.
 
+Optics path (see paths.py):
+    Displayed power is power at the objective. Each calibration point records
+    which optics were installed when it was measured; its known power is divided
+    by that path's transmission T_cal before fitting, so k describes the
+    detector alone. The displayed power is then
+        power_mW = (voltage_V - offset_V) / k * T_path_now
+    so swapping an optic rescales the calibration instead of invalidating it.
+
 Pure Python/numpy, no tkinter or nidaqmx, so it can be tested off the lab PC.
 """
 
@@ -26,7 +34,7 @@ import json
 import datetime
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -90,11 +98,21 @@ DEFAULT_REF_WAVELENGTH_NM: Dict[str, float] = {
 }
 
 
+# Points whose path let through less than this are ignored in fits: dividing by
+# a near-zero transmission would blow up any error in the curve.
+MIN_PATH_TRANSMISSION = 0.01
+
+
 @dataclass
 class CalibrationPoint:
     wavelength_nm: float
-    power_mw: float
+    power_mw: float  # known power at the objective
     voltage_v: float
+    path: Dict[str, str] = field(default_factory=dict)  # slot -> optic installed when measured
+
+
+def _unity_transmission(_point: "CalibrationPoint") -> float:
+    return 1.0
 
 
 @dataclass
@@ -105,6 +123,11 @@ class DetectorCalibration:
     ref_factor_v_per_mw: float = 7.0
     ref_wavelength_nm: Optional[float] = None
     points: List[CalibrationPoint] = field(default_factory=list)
+    # Path transmission at each point's wavelength and recorded path. Set by the
+    # app from its PathModel; not saved.
+    point_transmission: Callable[[CalibrationPoint], float] = field(
+        default=_unity_transmission, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         if self.ref_wavelength_nm is None:
@@ -147,15 +170,19 @@ class DetectorCalibration:
         Returns:
             Sorted list of (wavelength_nm, k_v_per_mw, offset_v, n_points).
         """
-        groups: Dict[float, List[CalibrationPoint]] = {}
+        groups: Dict[float, List[Tuple[float, float]]] = {}
         for p in self.points:
-            groups.setdefault(round(float(p.wavelength_nm), 3), []).append(p)
+            t = self.point_transmission(p)
+            if t < MIN_PATH_TRANSMISSION:
+                continue
+            # Power the detector model sees: power at objective with the path removed.
+            groups.setdefault(round(float(p.wavelength_nm), 3), []).append((p.power_mw / t, p.voltage_v))
 
         fits = []
         for wl in sorted(groups):
             pts = groups[wl]
-            P = np.array([p.power_mw for p in pts], dtype=float)
-            V = np.array([p.voltage_v for p in pts], dtype=float)
+            P = np.array([pv[0] for pv in pts], dtype=float)
+            V = np.array([pv[1] for pv in pts], dtype=float)
             if len(np.unique(P)) >= 2:
                 k, offset = np.polyfit(P, V, 1)
             else:
@@ -177,9 +204,10 @@ class DetectorCalibration:
         offset = float(np.interp(wavelength_nm, wls, offsets))
         return ratio * k_default, offset
 
-    def voltage_to_mw(self, voltage_v: float, wavelength_nm: float) -> float:
+    def voltage_to_mw(self, voltage_v: float, wavelength_nm: float, path_transmission: float = 1.0) -> float:
+        """Power in mW after a path with this transmission (1.0 = power the detector model sees)."""
         k, offset = self.factor_and_offset(wavelength_nm)
-        return (voltage_v - offset) / k
+        return (voltage_v - offset) / k * path_transmission
 
     def calibrated_range(self) -> Optional[Tuple[float, float]]:
         if not self.points:
@@ -200,7 +228,15 @@ class DetectorCalibration:
             name=name,
             ref_factor_v_per_mw=float(d.get("ref_factor_v_per_mw", 7.0)),
             ref_wavelength_nm=d.get("ref_wavelength_nm"),
-            points=[CalibrationPoint(**p) for p in d.get("points", [])],
+            points=[
+                CalibrationPoint(
+                    wavelength_nm=float(p["wavelength_nm"]),
+                    power_mw=float(p["power_mw"]),
+                    voltage_v=float(p["voltage_v"]),
+                    path=dict(p.get("path", {})),
+                )
+                for p in d.get("points", [])
+            ],
         )
 
 
@@ -226,22 +262,39 @@ def load_calibrations(path: Path) -> Dict[str, DetectorCalibration]:
     }
 
 
+def load_settings(path: Path = SETTINGS_PATH) -> dict:
+    """App settings (last wavelengths, installed optics); empty if missing or unreadable."""
+    try:
+        with open(Path(path).expanduser()) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def update_settings(values: dict, path: Path = SETTINGS_PATH) -> None:
+    """Merge values into the settings file, keeping keys not given."""
+    path = Path(path).expanduser()
+    data = load_settings(path)
+    data.update(values)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
 def load_last_wavelengths(path: Path = SETTINGS_PATH) -> Dict[str, float]:
     """Last wavelength set for each detector; a detector never set gets its reference wavelength."""
     wavelengths = dict(DEFAULT_REF_WAVELENGTH_NM)
-    try:
-        with open(Path(path).expanduser()) as f:
-            saved = json.load(f).get("wavelength_nm", {})
+    saved = load_settings(path).get("wavelength_nm", {})
+    if isinstance(saved, dict):
         for name, wl in saved.items():
-            if float(wl) > 0:
-                wavelengths[name] = float(wl)
-    except Exception:
-        pass
+            try:
+                if float(wl) > 0:
+                    wavelengths[name] = float(wl)
+            except (TypeError, ValueError):
+                pass
     return wavelengths
 
 
 def save_last_wavelengths(wavelengths: Dict[str, float], path: Path = SETTINGS_PATH) -> None:
-    path = Path(path).expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump({"wavelength_nm": wavelengths}, f, indent=2)
+    update_settings({"wavelength_nm": wavelengths}, path)

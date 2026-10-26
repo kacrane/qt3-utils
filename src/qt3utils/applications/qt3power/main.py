@@ -12,9 +12,17 @@ from qt3utils.applications.qt3power.calibration import (
     CalibrationPoint,
     DetectorCalibration,
     load_calibrations,
+    MIN_PATH_TRANSMISSION,
     load_last_wavelengths,
+    load_settings,
     save_calibrations,
     save_last_wavelengths,
+    update_settings,
+)
+from qt3utils.applications.qt3power.paths import (
+    DEFAULT_PATH_CONFIG,
+    PATH_CONFIG_PATH,
+    PathModel,
 )
 
 DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
@@ -129,6 +137,8 @@ class PhotodetectorController:
 class PowerMonitorApp:
     """
     Simple GUI that shows power in mW for two photodetectors read via NI DAQ.
+    Displayed power is the power at the objective: the detectors read a sampled
+    beam, and the swappable optics after the sampler are applied via paths.py.
 
     The conversion is wavelength dependent (see calibration.py):
         power_mW = (voltage_V - offset_V) / k(wavelength)
@@ -158,7 +168,23 @@ class PowerMonitorApp:
         self.calibration_window: Optional["CalibrationWindow"] = None
         self.last_voltages: Optional[Tuple[float, float]] = None
 
+        path_config_error = None
+        try:
+            self.path_model = PathModel()
+        except Exception as e:
+            path_config_error = e
+            self.path_model = PathModel(DEFAULT_PATH_CONFIG)
+        self.path_model.set_installed(load_settings().get("path", {}))
+        self.path_vars: Dict[str, tk.StringVar] = {}
+        self._wire_detectors()
+
         self._build_gui()
+
+        if path_config_error is not None:
+            messagebox.showwarning(
+                "Optics path",
+                f"Could not read {PATH_CONFIG_PATH}:\n{path_config_error}\nUsing the built-in path.",
+            )
 
         if DEFAULT_CALIBRATION_PATH.exists():
             try:
@@ -217,6 +243,17 @@ class PowerMonitorApp:
         tk.Button(cal_frame, text="Use Default Curve", command=self.clear_calibration).pack(side="left", padx=4, pady=4)
         self.lbl_cal_source = tk.Label(cal_frame, text="")
         self.lbl_cal_source.pack(side="left", padx=10)
+
+        # Optics between the beam sampler and the objective
+        path_frame = tk.LabelFrame(main_frame, text="Optics to Objective")
+        path_frame.pack(fill="x", pady=5)
+        for col, (slot, spec) in enumerate(self.path_model.slots.items()):
+            tk.Label(path_frame, text=f"{slot}:").grid(row=0, column=2 * col, sticky="e", padx=5, pady=4)
+            var = tk.StringVar(value=self.path_model.installed[slot])
+            box = ttk.Combobox(path_frame, textvariable=var, values=spec["options"], state="readonly", width=12)
+            box.grid(row=0, column=2 * col + 1, sticky="w", padx=5, pady=4)
+            box.bind("<<ComboboxSelected>>", lambda _e, s=slot: self.set_installed_optic(s))
+            self.path_vars[slot] = var
 
         # Power display
         display_frame = tk.LabelFrame(main_frame, text="Photodetector Power")
@@ -375,8 +412,28 @@ class PowerMonitorApp:
         self.lbl_pda100a2_power.config(text=f"{self._voltage_to_mw('PDA100A2', v2):.4f}")
 
     def _voltage_to_mw(self, detector: str, voltage: float) -> float:
-        """Convert voltage (V) to power (mW) at the current wavelength."""
-        return self.detectors[detector].voltage_to_mw(voltage, self.wavelengths[detector])
+        """Convert voltage (V) to power at the objective (mW) at the current wavelength and optics."""
+        wl = self.wavelengths[detector]
+        t_path = self.path_model.transmission(detector, wl)
+        return self.detectors[detector].voltage_to_mw(voltage, wl, t_path)
+
+    def _wire_detectors(self) -> None:
+        """Let each detector's calibration look up the path transmission of its recorded points."""
+        for name, det in self.detectors.items():
+            # Points without a recorded path predate path support: treat as no optics.
+            det.point_transmission = lambda p, n=name: (
+                self.path_model.transmission(n, p.wavelength_nm, p.path) if p.path else 1.0
+            )
+
+    def set_installed_optic(self, slot: str) -> None:
+        self.path_model.installed[slot] = self.path_vars[slot].get()
+        try:
+            update_settings({"path": self.path_model.installed})
+        except OSError:
+            pass  # remembering the optics is a convenience; don't block on it
+        self._refresh_conversion_display()
+        if self.calibration_window is not None:
+            self.calibration_window.refresh()
 
     # ---- Wavelength / calibration ----
 
@@ -415,12 +472,23 @@ class PowerMonitorApp:
         det = self.detectors[name]
         wl = self.wavelengths[name]
         k, offset = det.factor_and_offset(wl)
-        lines = [f"{name} at {wl:g} nm: {k:.4g} V/mW"]
+        t_path = self.path_model.transmission(name, wl)
+        lines = [f"{name} at {wl:g} nm, power at objective"]
+        if t_path > 0:
+            lines.append(f"Overall: {k / t_path:.4g} V/mW")
+        lines.append(f"Detector: {k:.4g} V/mW")
         if offset:
             lines.append(f"Offset: {offset * 1000:+.2f} mV")
+        lines.append(f"Optics to objective: {t_path * 100:.1f}%")
+        lines.extend("  " + line for line in self.path_model.describe(name, wl))
+        if t_path < 0.05:
+            lines.append("Note: almost no light reaches the objective on this path at this wavelength")
         if det.is_calibrated:
             lo, hi = det.calibrated_range()
             lines.append(f"Source: calibration, {len(det.points)} pts, {lo:g}-{hi:g} nm")
+            cal_paths = {self.path_model.label(p.path) for p in det.points if p.path}
+            if cal_paths and cal_paths != {self.path_model.label()}:
+                lines.append(f"Calibrated with {'; '.join(sorted(cal_paths))}, rescaled to current optics")
             if not lo <= wl <= hi:
                 lines.append("Note: outside calibrated range, extrapolated with Thorlabs curve shape")
         elif det.curve is not None:
@@ -449,6 +517,7 @@ class PowerMonitorApp:
         for name in DETECTOR_NAMES:
             self.detectors[name] = loaded.get(name, DetectorCalibration(name))
         self.calibration_dirty = False
+        self._wire_detectors()
 
     def _confirm_discard_unsaved(self, action: str) -> bool:
         if not self.calibration_dirty:
@@ -515,6 +584,7 @@ class PowerMonitorApp:
         self.detectors = {name: DetectorCalibration(name) for name in DETECTOR_NAMES}
         self.calibration_path = None
         self.calibration_dirty = False
+        self._wire_detectors()
         self._refresh_conversion_display()
         if self.calibration_window is not None:
             self.calibration_window.refresh()
@@ -621,9 +691,10 @@ class CalibrationWindow:
     """
     Record (wavelength, known power, detector voltage) points.
 
-    Workflow: set the laser wavelength, measure its power with a reference power
-    meter, type that power in, press "Read DAQ" to average the detector voltage,
-    then "Add Point". Repeat at several powers and wavelengths. Points take effect
+    Workflow: set the laser wavelength, measure its power AT THE OBJECTIVE with a
+    reference power meter, type that power in, press "Read DAQ" to average the
+    detector voltage, then "Add Point". Each point records the optics installed
+    in the main window, so later optics swaps rescale it. Repeat at several powers and wavelengths. Points take effect
     in the main window immediately; use Save Cal... to keep them.
     """
 
@@ -632,6 +703,9 @@ class CalibrationWindow:
         self.win = tk.Toplevel(app.root)
         self.win.title("qt3power Calibration")
         self.win.protocol("WM_DELETE_WINDOW", self.close)
+
+        self.lbl_path = tk.Label(self.win, text="", justify="left", anchor="w")
+        self.lbl_path.pack(fill="x", padx=10, pady=(8, 0))
 
         frm = tk.Frame(self.win)
         frm.pack(fill="x", padx=10, pady=5)
@@ -648,7 +722,7 @@ class CalibrationWindow:
         self.ent_wl.grid(row=1, column=1, sticky="w", padx=3, pady=2)
         self.ent_wl.insert(0, f"{app.wavelengths[DETECTOR_NAMES[0]]:g}")
 
-        tk.Label(frm, text="Known power (mW):").grid(row=2, column=0, sticky="e")
+        tk.Label(frm, text="Power at objective (mW):").grid(row=2, column=0, sticky="e")
         self.ent_power = tk.Entry(frm, width=10)
         self.ent_power.grid(row=2, column=1, sticky="w", padx=3, pady=2)
 
@@ -668,10 +742,10 @@ class CalibrationWindow:
             row=4, column=2, columnspan=2, sticky="w", padx=3, pady=5
         )
 
-        cols = ("wl", "power", "voltage", "k")
+        cols = ("wl", "power", "voltage", "k", "path")
         self.tree = ttk.Treeview(self.win, columns=cols, show="headings", height=8)
         for c, title, w in zip(
-            cols, ("Wavelength (nm)", "Power (mW)", "Voltage (V)", "V/mW"), (110, 90, 90, 80)
+            cols, ("Wavelength (nm)", "Power (mW)", "Voltage (V)", "V/mW", "Optics"), (110, 90, 90, 80, 160)
         ):
             self.tree.heading(c, text=title)
             self.tree.column(c, width=w, anchor="center")
@@ -711,7 +785,18 @@ class CalibrationWindow:
         except ValueError as e:
             messagebox.showerror("Add Point", f"Check wavelength, power and voltage: {e}", parent=self.win)
             return
-        self._detector().points.append(CalibrationPoint(wl, power, voltage))
+        name = self.var_detector.get()
+        path = dict(self.app.path_model.installed)
+        t_path = self.app.path_model.transmission(name, wl, path)
+        if t_path < MIN_PATH_TRANSMISSION:
+            messagebox.showerror(
+                "Add Point",
+                f"Only {t_path * 100:.2f}% of the {name} beam reaches the objective at {wl:g} nm "
+                f"with {self.app.path_model.label(path)}. Check the optics selection.",
+                parent=self.win,
+            )
+            return
+        self._detector().points.append(CalibrationPoint(wl, power, voltage, path))
         self.app.calibration_dirty = True
         self.ent_power.delete(0, tk.END)
         self.ent_voltage.delete(0, tk.END)
@@ -733,9 +818,19 @@ class CalibrationWindow:
             k = p.voltage_v / p.power_mw if p.power_mw else float("nan")
             self.tree.insert(
                 "", "end", iid=str(i),
-                values=(f"{p.wavelength_nm:g}", f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}"),
+                values=(
+                    f"{p.wavelength_nm:g}", f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}",
+                    self.app.path_model.label(p.path) if p.path else "(not recorded)",
+                ),
             )
-        lines = ["Fit per wavelength (V = k*P + offset):"]
+        name = self.var_detector.get()
+        wl_now = self.app.wavelengths[name]
+        self.lbl_path.config(
+            text=f"Measure the reference power at the objective.\n"
+            f"Optics now: {self.app.path_model.label()}  "
+            f"({name} path {self.app.path_model.transmission(name, wl_now) * 100:.1f}% at {wl_now:g} nm)"
+        )
+        lines = ["Fit per wavelength, detector only (V = k*P/T_path + offset):"]
         for wl, k, offset, n in det.fit_by_wavelength():
             ratio = k / det.default_factor(wl)
             lines.append(
