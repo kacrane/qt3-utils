@@ -12,7 +12,9 @@ from qt3utils.applications.qt3power.calibration import (
     CalibrationPoint,
     DetectorCalibration,
     load_calibrations,
+    load_last_wavelength,
     save_calibrations,
+    save_last_wavelength,
 )
 
 DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
@@ -130,7 +132,8 @@ class PowerMonitorApp:
 
     The conversion is wavelength dependent (see calibration.py):
         power_mW = (voltage_V - offset_V) / k(wavelength)
-    By default k = 7.0 V/mW at 1550 nm (0.7 V -> 0.1 mW), scaled by the
+    By default k = 7.0 V/mW (0.7 V -> 0.1 mW) at a reference wavelength
+    (1550 nm PDA50B2, 980 nm PDA100A2), scaled by the
     detector's responsivity curve at other wavelengths. A measured calibration,
     if loaded, overrides the default. Assumes the detector gain is never changed.
     """
@@ -145,7 +148,7 @@ class PowerMonitorApp:
         self.update_interval_ms = 200  # ~5 Hz polling
         self.var_ignore_santec_lock = tk.BooleanVar(value=False)
 
-        self.wavelength_nm = 1550.0
+        self.wavelength_nm = load_last_wavelength()
         self.detectors: Dict[str, DetectorCalibration] = {
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
@@ -391,6 +394,10 @@ class PowerMonitorApp:
         if wl == self.wavelength_nm:
             return
         self.wavelength_nm = wl
+        try:
+            save_last_wavelength(wl)
+        except OSError:
+            pass  # remembering the wavelength is a convenience; don't block on it
         self._refresh_conversion_display()
 
     def _refresh_conversion_display(self) -> None:

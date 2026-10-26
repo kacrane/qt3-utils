@@ -5,8 +5,9 @@ Each detector has a conversion factor k(wavelength) in V/mW, so that
 
 Default model (no calibration loaded):
     k(wl) = ref_factor * R(wl) / R(ref_wavelength)
-where R is the detector's responsivity curve (A/W). For a detector without a
-curve, R is flat and k is just ref_factor at every wavelength.
+where R is the detector's responsivity curve (A/W) from Thorlabs raw data
+(PDA50B2 and PDA100A2). For a detector without a curve, R is flat and k is
+just ref_factor at every wavelength.
 
 Calibration model (measured points loaded):
     At each measured wavelength the points (power, voltage) are fit to
@@ -30,6 +31,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 DEFAULT_CALIBRATION_PATH = Path.home() / ".qt3utils" / "qt3power_calibration.json"
+SETTINGS_PATH = Path.home() / ".qt3utils" / "qt3power_settings.json"
+DEFAULT_WAVELENGTH_NM = 1550.0
 
 # Thorlabs PDA50B2 (and PDA30B2) typical responsivity (A/W) vs wavelength (nm),
 # from Thorlabs "Ge Biased Photodetectors Responsivity" raw data (ge_biased_responsivity_5.xlsx).
@@ -62,8 +65,29 @@ PDA50B2_RESPONSIVITY: Tuple[Tuple[float, float], ...] = (
     (1800, 0.14279),
 )
 
+# Thorlabs PDA100A2 (Si) typical responsivity (A/W) vs wavelength (nm),
+# from Thorlabs "PDA100A2 Responsivity" raw data (pda100a2_responsivity-2.xlsx).
+PDA100A2_RESPONSIVITY: Tuple[Tuple[float, float], ...] = (
+    (320, 0.174), (330, 0.181), (340, 0.184), (350, 0.181), (360, 0.175),
+    (370, 0.17), (380, 0.175), (390, 0.186), (400, 0.193), (420, 0.212),
+    (440, 0.23), (460, 0.248), (480, 0.269), (500, 0.289), (520, 0.309),
+    (540, 0.332), (560, 0.355), (580, 0.377), (600, 0.399), (620, 0.424),
+    (640, 0.448), (660, 0.468), (680, 0.488), (700, 0.509), (720, 0.529),
+    (740, 0.548), (760, 0.566), (780, 0.585), (800, 0.601), (820, 0.616),
+    (840, 0.636), (860, 0.651), (880, 0.667), (900, 0.678), (920, 0.696),
+    (940, 0.711), (960, 0.721), (980, 0.726), (1000, 0.708), (1020, 0.653),
+    (1040, 0.553), (1060, 0.415), (1080, 0.295), (1100, 0.2),
+)
+
 RESPONSIVITY_CURVES: Dict[str, Tuple[Tuple[float, float], ...]] = {
     "PDA50B2": PDA50B2_RESPONSIVITY,
+    "PDA100A2": PDA100A2_RESPONSIVITY,
+}
+
+# Wavelength at which the legacy fixed 7.0 V/mW factor is assumed to hold.
+DEFAULT_REF_WAVELENGTH_NM: Dict[str, float] = {
+    "PDA50B2": 1550.0,
+    "PDA100A2": 980.0,
 }
 
 
@@ -80,8 +104,12 @@ class DetectorCalibration:
 
     name: str
     ref_factor_v_per_mw: float = 7.0
-    ref_wavelength_nm: float = 1550.0
+    ref_wavelength_nm: Optional[float] = None
     points: List[CalibrationPoint] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.ref_wavelength_nm is None:
+            self.ref_wavelength_nm = DEFAULT_REF_WAVELENGTH_NM.get(self.name, 1550.0)
 
     @property
     def curve(self) -> Optional[Tuple[Tuple[float, float], ...]]:
@@ -172,7 +200,7 @@ class DetectorCalibration:
         return cls(
             name=name,
             ref_factor_v_per_mw=float(d.get("ref_factor_v_per_mw", 7.0)),
-            ref_wavelength_nm=float(d.get("ref_wavelength_nm", 1550.0)),
+            ref_wavelength_nm=d.get("ref_wavelength_nm"),
             points=[CalibrationPoint(**p) for p in d.get("points", [])],
         )
 
@@ -197,3 +225,20 @@ def load_calibrations(path: Path) -> Dict[str, DetectorCalibration]:
         name: DetectorCalibration.from_dict(name, d)
         for name, d in data.get("detectors", {}).items()
     }
+
+
+def load_last_wavelength(path: Path = SETTINGS_PATH) -> float:
+    """Last wavelength set in qt3power, or DEFAULT_WAVELENGTH_NM if none was saved."""
+    try:
+        with open(Path(path).expanduser()) as f:
+            wl = float(json.load(f)["wavelength_nm"])
+        return wl if wl > 0 else DEFAULT_WAVELENGTH_NM
+    except Exception:
+        return DEFAULT_WAVELENGTH_NM
+
+
+def save_last_wavelength(wavelength_nm: float, path: Path = SETTINGS_PATH) -> None:
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump({"wavelength_nm": wavelength_nm}, f)
