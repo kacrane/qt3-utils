@@ -8,7 +8,16 @@ import nidaqmx
 
 from qt3utils.applications.qt3_daq_busy_marker import santec_daq_busy
 from qt3utils.applications.qt3power.calibration import (
+    CALIBRATIONS_DIR,
     DEFAULT_CALIBRATION_PATH,
+    STATUS_CURRENT,
+    STATUS_DEFAULT,
+    STATUS_OLDER,
+    STATUS_WRONG_OPTICS,
+    calibration_status,
+    default_calibration_filename,
+    optics_label,
+    scan_calibration_files,
     CalibrationPoint,
     DetectorCalibration,
     load_calibrations,
@@ -26,6 +35,14 @@ from qt3utils.applications.qt3power.paths import (
 )
 
 DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
+
+# Calibration status text colors (yellow darkened to stay readable on grey).
+STATUS_COLORS = {
+    STATUS_CURRENT: "#008800",
+    STATUS_OLDER: "#b08d00",
+    STATUS_WRONG_OPTICS: "#cc0000",
+    STATUS_DEFAULT: "#d96c00",
+}
 
 _STALE_LOCK_TOOLTIP = (
     "Only use this when qt3santec is not scanning but the busy marker was left behind "
@@ -186,38 +203,30 @@ class PowerMonitorApp:
                 f"Could not read {PATH_CONFIG_PATH}:\n{path_config_error}\nUsing the built-in path.",
             )
 
-        if DEFAULT_CALIBRATION_PATH.exists():
-            try:
-                self._apply_loaded_calibrations(load_calibrations(DEFAULT_CALIBRATION_PATH))
-                self.calibration_path = DEFAULT_CALIBRATION_PATH
-            except Exception as e:
-                messagebox.showwarning(
-                    "Calibration",
-                    f"Could not load {DEFAULT_CALIBRATION_PATH}:\n{e}\nUsing default responsivity curve.",
-                )
+        self._load_newest_calibration_for_installed_optics()
         self._refresh_conversion_display()
 
     def _build_gui(self) -> None:
         main_frame = tk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # DAQ configuration
-        cfg_frame = tk.LabelFrame(main_frame, text="DAQ Configuration")
+        # Configuration: DAQ, optics to objective, calibration
+        cfg_frame = tk.LabelFrame(main_frame, text="Configuration")
         cfg_frame.pack(fill="x", pady=5)
 
-        tk.Label(cfg_frame, text="DAQ Device:").grid(row=0, column=0, sticky="e", padx=5, pady=5)
-        self.ent_device = tk.Entry(cfg_frame, width=12)
-        self.ent_device.grid(row=0, column=1, padx=5, pady=5)
+        tk.Label(cfg_frame, text="DAQ Device:").grid(row=0, column=0, sticky="e")
+        self.ent_device = tk.Entry(cfg_frame, width=8)
+        self.ent_device.grid(row=0, column=1, sticky="w")
         self.ent_device.insert(0, "Dev1")
 
-        tk.Label(cfg_frame, text="PDA50B2 Channel:").grid(row=0, column=2, sticky="e", padx=5, pady=5)
-        self.ent_ch1 = tk.Entry(cfg_frame, width=10)
-        self.ent_ch1.grid(row=0, column=3, padx=5, pady=5)
+        tk.Label(cfg_frame, text="PDA50B2 Ch:").grid(row=0, column=2, sticky="e")
+        self.ent_ch1 = tk.Entry(cfg_frame, width=6)
+        self.ent_ch1.grid(row=0, column=3, sticky="w")
         self.ent_ch1.insert(0, "ai2")
 
-        tk.Label(cfg_frame, text="PDA100A2 Channel:").grid(row=0, column=4, sticky="e", padx=5, pady=5)
-        self.ent_ch2 = tk.Entry(cfg_frame, width=10)
-        self.ent_ch2.grid(row=0, column=5, padx=5, pady=5)
+        tk.Label(cfg_frame, text="PDA100A2 Ch:").grid(row=0, column=4, sticky="e")
+        self.ent_ch2 = tk.Entry(cfg_frame, width=6)
+        self.ent_ch2.grid(row=0, column=5, sticky="w")
         self.ent_ch2.insert(0, "ai0")
 
         self.btn_init = tk.Button(
@@ -226,34 +235,37 @@ class PowerMonitorApp:
             command=self.init_daq,
             bg="#dddddd",
         )
-        self.btn_init.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="w")
+        self.btn_init.grid(row=0, column=6, sticky="w")
 
         self.lbl_status = tk.Label(cfg_frame, text="DAQ: Not initialized", fg="red")
-        self.lbl_status.grid(row=1, column=2, columnspan=4, padx=5, pady=5, sticky="w")
+        self.lbl_status.grid(row=0, column=7, sticky="w")
+
+        # Optics between the beam sampler and the objective, one dropdown per slot
+        optics_row = tk.Frame(cfg_frame)
+        optics_row.grid(row=1, column=0, columnspan=8, sticky="w")
+        for slot, spec in self.path_model.slots.items():
+            tk.Label(optics_row, text=f"{slot}:").pack(side="left", padx=(0, 3))
+            var = tk.StringVar(value=self.path_model.installed[slot])
+            box = ttk.Combobox(optics_row, textvariable=var, values=spec["options"], state="readonly", width=12)
+            box.pack(side="left", padx=(0, 12))
+            box.bind("<<ComboboxSelected>>", lambda _e, s=slot: self.set_installed_optic(s))
+            self.path_vars[slot] = var
+        for text, cmd in (
+            ("Calibrate...", self.open_calibration_window),
+            ("Load Cal...", self.load_calibration_dialog),
+            ("Save Cal...", self.save_calibration_dialog),
+            ("Use Default Curve", self.clear_calibration),
+        ):
+            tk.Button(optics_row, text=text, command=cmd).pack(side="left", padx=2)
+
+        tk.Label(cfg_frame, text="Calibration:").grid(row=2, column=0, sticky="e")
+        self.lbl_cal_source = tk.Label(
+            cfg_frame, text="", anchor="w", justify="left", wraplength=620, font=("Arial", 10, "bold")
+        )
+        self.lbl_cal_source.grid(row=2, column=1, columnspan=7, sticky="w")
 
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
-
-        # Calibration
-        cal_frame = tk.LabelFrame(main_frame, text="Calibration")
-        cal_frame.pack(fill="x", pady=5)
-        tk.Button(cal_frame, text="Calibrate...", command=self.open_calibration_window).pack(side="left", padx=4, pady=4)
-        tk.Button(cal_frame, text="Load Cal...", command=self.load_calibration_dialog).pack(side="left", padx=4, pady=4)
-        tk.Button(cal_frame, text="Save Cal...", command=self.save_calibration_dialog).pack(side="left", padx=4, pady=4)
-        tk.Button(cal_frame, text="Use Default Curve", command=self.clear_calibration).pack(side="left", padx=4, pady=4)
-        self.lbl_cal_source = tk.Label(cal_frame, text="")
-        self.lbl_cal_source.pack(side="left", padx=10)
-
-        # Optics between the beam sampler and the objective
-        path_frame = tk.LabelFrame(main_frame, text="Optics to Objective")
-        path_frame.pack(fill="x", pady=5)
-        for col, (slot, spec) in enumerate(self.path_model.slots.items()):
-            tk.Label(path_frame, text=f"{slot}:").grid(row=0, column=2 * col, sticky="e", padx=5, pady=4)
-            var = tk.StringVar(value=self.path_model.installed[slot])
-            box = ttk.Combobox(path_frame, textvariable=var, values=spec["options"], state="readonly", width=12)
-            box.grid(row=0, column=2 * col + 1, sticky="w", padx=5, pady=4)
-            box.bind("<<ComboboxSelected>>", lambda _e, s=slot: self.set_installed_optic(s))
-            self.path_vars[slot] = var
 
         # Power display
         display_frame = tk.LabelFrame(main_frame, text="Photodetector Power")
@@ -504,12 +516,14 @@ class PowerMonitorApp:
         return "\n".join(lines)
 
     def _refresh_conversion_display(self) -> None:
-        if any(d.is_calibrated for d in self.detectors.values()):
-            src = self.calibration_path.name if self.calibration_path is not None else "unsaved points"
-            unsaved = " (unsaved changes)" if self.calibration_dirty and self.calibration_path is not None else ""
-            self.lbl_cal_source.config(text=f"Using calibration: {src}{unsaved}")
-        else:
-            self.lbl_cal_source.config(text="Using Thorlabs responsivity curves")
+        status, text = calibration_status(
+            self.detectors,
+            self.calibration_path,
+            self.calibration_dirty,
+            self.path_model.installed,
+            self._calibration_library(),
+        )
+        self.lbl_cal_source.config(text=text, fg=STATUS_COLORS[status])
         if self.last_voltages is not None:
             self._show_readings(*self.last_voltages)
 
@@ -527,12 +541,35 @@ class PowerMonitorApp:
             f"You have unsaved calibration points. {action} anyway and discard them?",
         )
 
+    def _calibration_library(self):
+        """Saved calibration files the status compares against, newest first."""
+        folders = [CALIBRATIONS_DIR, DEFAULT_CALIBRATION_PATH.parent]
+        if self.calibration_path is not None:
+            folders.append(self.calibration_path.parent)
+        return scan_calibration_files(folders)
+
+    def _load_newest_calibration_for_installed_optics(self) -> None:
+        """At startup: load the newest saved calibration measured with the installed optics, if any."""
+        current = optics_label(self.path_model.installed)
+        for info in self._calibration_library():
+            if info.optics != [current]:
+                continue
+            try:
+                self._apply_loaded_calibrations(load_calibrations(info.path))
+                self.calibration_path = info.path
+            except Exception as e:
+                messagebox.showwarning(
+                    "Calibration",
+                    f"Could not load {info.path}:\n{e}\nUsing default responsivity curve.",
+                )
+            return
+
     def load_calibration_dialog(self) -> None:
         if not self._confirm_discard_unsaved("Load a calibration"):
             return
         path = filedialog.askopenfilename(
             title="Load qt3power calibration",
-            initialdir=str(DEFAULT_CALIBRATION_PATH.parent),
+            initialdir=str(CALIBRATIONS_DIR if CALIBRATIONS_DIR.is_dir() else DEFAULT_CALIBRATION_PATH.parent),
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
         if not path:
@@ -549,10 +586,11 @@ class PowerMonitorApp:
 
     def save_calibration_dialog(self) -> bool:
         """Returns True if the calibration was saved."""
+        CALIBRATIONS_DIR.mkdir(parents=True, exist_ok=True)
         path = filedialog.asksaveasfilename(
             title="Save qt3power calibration",
-            initialdir=str(DEFAULT_CALIBRATION_PATH.parent),
-            initialfile=DEFAULT_CALIBRATION_PATH.name,
+            initialdir=str(CALIBRATIONS_DIR),
+            initialfile=default_calibration_filename(self.path_model.installed),
             defaultextension=".json",
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
@@ -566,10 +604,14 @@ class PowerMonitorApp:
         self.calibration_path = Path(path)
         self.calibration_dirty = False
         self._refresh_conversion_display()
-        if Path(path).expanduser().resolve() != DEFAULT_CALIBRATION_PATH.resolve():
+        if Path(path).expanduser().resolve().parent not in (
+            CALIBRATIONS_DIR.resolve(),
+            DEFAULT_CALIBRATION_PATH.parent.resolve(),
+        ):
             messagebox.showinfo(
                 "Calibration saved",
-                f"Saved to {path}.\nOnly {DEFAULT_CALIBRATION_PATH} is loaded automatically at startup.",
+                f"Saved to {path}.\nOnly files in {CALIBRATIONS_DIR} are picked up automatically "
+                "at startup and compared when checking for the newest calibration.",
             )
         return True
 

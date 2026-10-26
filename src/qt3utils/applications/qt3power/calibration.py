@@ -38,7 +38,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
-DEFAULT_CALIBRATION_PATH = Path.home() / ".qt3utils" / "qt3power_calibration.json"
+DEFAULT_CALIBRATION_PATH = Path.home() / ".qt3utils" / "qt3power_calibration.json"  # legacy single file
+CALIBRATIONS_DIR = Path.home() / ".qt3utils" / "qt3power_calibrations"
+CALIBRATION_FORMAT = "qt3power_calibration_v1"
 SETTINGS_PATH = Path.home() / ".qt3utils" / "qt3power_settings.json"
 
 # Thorlabs PDA50B2 (and PDA30B2) typical responsivity (A/W) vs wavelength (nm),
@@ -244,7 +246,7 @@ def save_calibrations(path: Path, detectors: Dict[str, DetectorCalibration], not
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
-        "format": "qt3power_calibration_v1",
+        "format": CALIBRATION_FORMAT,
         "saved": datetime.datetime.now().isoformat(timespec="seconds"),
         "notes": notes,
         "detectors": {name: det.to_dict() for name, det in detectors.items()},
@@ -260,6 +262,90 @@ def load_calibrations(path: Path) -> Dict[str, DetectorCalibration]:
         name: DetectorCalibration.from_dict(name, d)
         for name, d in data.get("detectors", {}).items()
     }
+
+
+def optics_label(path: Dict[str, str]) -> str:
+    """e.g. {'Dichroic': 'DMLP950'} -> 'Dichroic=DMLP950'; empty -> '(optics not recorded)'."""
+    if not path:
+        return "(optics not recorded)"
+    return ", ".join(f"{slot}={optic}" for slot, optic in sorted(path.items()))
+
+
+def calibration_optics(detectors: Dict[str, DetectorCalibration]) -> List[str]:
+    """Sorted distinct optics labels of all points in a calibration."""
+    return sorted({optics_label(p.path) for det in detectors.values() for p in det.points})
+
+
+def default_calibration_filename(installed: Dict[str, str], when: Optional[datetime.datetime] = None) -> str:
+    when = when or datetime.datetime.now()
+    optics = "_".join(f"{slot}-{optic}" for slot, optic in sorted(installed.items())) or "no-optics"
+    return f"qt3power_cal_{optics}_{when:%Y%m%d-%H%M}.json"
+
+
+@dataclass
+class CalibrationFileInfo:
+    path: Path
+    saved: datetime.datetime
+    optics: List[str]
+
+
+def scan_calibration_files(folders: List[Path]) -> List[CalibrationFileInfo]:
+    """qt3power calibration files in these folders (not recursive), newest first."""
+    found: Dict[Path, CalibrationFileInfo] = {}
+    for folder in folders:
+        folder = Path(folder).expanduser()
+        if not folder.is_dir():
+            continue
+        for f in folder.glob("*.json"):
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                if data.get("format") != CALIBRATION_FORMAT:
+                    continue
+                try:
+                    saved = datetime.datetime.fromisoformat(data["saved"])
+                except Exception:
+                    saved = datetime.datetime.fromtimestamp(f.stat().st_mtime)
+                dets = {n: DetectorCalibration.from_dict(n, d) for n, d in data.get("detectors", {}).items()}
+                found[f.resolve()] = CalibrationFileInfo(f, saved, calibration_optics(dets))
+            except Exception:
+                continue  # unreadable or not a calibration: ignore
+    return sorted(found.values(), key=lambda i: i.saved, reverse=True)
+
+
+# Calibration status shown in the main window.
+STATUS_CURRENT = "current"  # newest saved calibration for the installed optics (or unsaved, same optics)
+STATUS_OLDER = "older"  # right optics, but a newer file with the same optics exists
+STATUS_WRONG_OPTICS = "wrong_optics"  # measured with different optics than installed
+STATUS_DEFAULT = "default"  # no calibration: Thorlabs curves
+
+
+def calibration_status(
+    detectors: Dict[str, DetectorCalibration],
+    loaded_path: Optional[Path],
+    dirty: bool,
+    installed: Dict[str, str],
+    library: List[CalibrationFileInfo],
+) -> Tuple[str, str]:
+    """Return (status, text) describing the calibration in use."""
+    optics = calibration_optics(detectors)
+    if not optics:
+        return STATUS_DEFAULT, "Thorlabs default curves (no calibration loaded)"
+    name = loaded_path.name if loaded_path is not None else "unsaved points"
+    if dirty and loaded_path is not None:
+        name += " (unsaved changes)"
+    current = optics_label(installed)
+    if optics != [current]:
+        return STATUS_WRONG_OPTICS, f"{name} - measured with {'; '.join(optics)}, but {current} is installed"
+    if loaded_path is None or dirty:
+        return STATUS_CURRENT, f"{name} - {current}"
+    newest = next((i for i in library if i.optics == [current]), None)
+    loaded_saved = next(
+        (i.saved for i in library if i.path.resolve() == Path(loaded_path).resolve()), None
+    )
+    if newest is None or loaded_saved is None or loaded_saved >= newest.saved:
+        return STATUS_CURRENT, f"{name} - newest for {current}"
+    return STATUS_OLDER, f"{name} - older; newest for {current} is {newest.path.name}"
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> dict:

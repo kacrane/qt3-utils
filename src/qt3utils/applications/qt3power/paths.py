@@ -28,6 +28,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from qt3utils.applications.qt3power.calibration import optics_label
+
 OPTICS_DIR = Path(__file__).parent / "optics"
 PATH_CONFIG_PATH = Path.home() / ".qt3utils" / "qt3power_paths.json"
 NO_OPTIC = "None"
@@ -138,4 +140,4 @@ class PathModel:
 
     def label(self, installed: Optional[Dict[str, str]] = None) -> str:
         installed = self.installed if installed is None else installed
-        return ", ".join(f"{slot}={optic}" for slot, optic in sorted(installed.items()))
+        return optics_label(installed)
