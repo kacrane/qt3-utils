@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
 import time
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import nidaqmx
 
@@ -35,6 +35,19 @@ from qt3utils.applications.qt3power.paths import (
 )
 
 DETECTOR_NAMES = ("PDA50B2", "PDA100A2")
+
+# Each reading is a hardware-timed burst averaged over many samples, so pulsed
+# sources (e.g. SuperK CHROMATUNE, 0.15-78 MHz) average out. The default rate is
+# deliberately not a round number: a rate that divides the pulse rate would sample
+# every pulse at the same phase and bias the average.
+DEFAULT_BURST_SAMPLES = 500
+DEFAULT_BURST_RATE_HZ = 9973.0
+
+# Detector output limit (V, high-impedance load; halve for 50 ohm). A burst whose
+# largest sample reaches SATURATION_FRACTION of this, or of the DAQ range, is
+# flagged: the average is then not linear in power.
+DETECTOR_MAX_OUTPUT_V = {"PDA50B2": 10.0, "PDA100A2": 10.0}
+SATURATION_FRACTION = 0.95
 
 # Calibration status text colors (yellow darkened to stay readable on grey).
 STATUS_COLORS = {
@@ -98,6 +111,8 @@ class PhotodetectorController:
         channel2: str = "ai0",
         min_voltage: float = -10.0,
         max_voltage: float = 10.0,
+        burst_samples: int = DEFAULT_BURST_SAMPLES,
+        burst_rate_hz: float = DEFAULT_BURST_RATE_HZ,
     ) -> None:
         """
         Initialize photodetector controller.
@@ -108,16 +123,24 @@ class PhotodetectorController:
             channel2: Analog input channel for second detector (PDA100A2).
             min_voltage: Minimum expected voltage.
             max_voltage: Maximum expected voltage.
+            burst_samples: Samples per channel averaged for each reading (1 = single sample).
+            burst_rate_hz: Sample rate per channel for the burst.
         """
         self.device_name = device_name
         self.channel1 = channel1
         self.channel2 = channel2
         self.min_voltage = min_voltage
         self.max_voltage = max_voltage
+        self.burst_samples = max(1, int(burst_samples))
+        self.burst_rate_hz = float(burst_rate_hz)
+        # Largest |V| seen in the last burst, per detector (for saturation checks).
+        self.last_peaks: Tuple[float, float] = (0.0, 0.0)
 
     def read_both_detectors(self) -> Tuple[float, float]:
         """
-        Read voltage from both detectors simultaneously.
+        Read both detectors over one burst and return the mean voltages.
+
+        Also stores the largest |V| of each channel in last_peaks.
 
         Returns:
             (voltage1, voltage2) in volts.
@@ -137,14 +160,20 @@ class PhotodetectorController:
                     min_val=self.min_voltage,
                     max_val=self.max_voltage,
                 )
-                data = task.read(number_of_samples_per_channel=1)
+                n = self.burst_samples
+                if n > 1:
+                    task.timing.cfg_samp_clk_timing(
+                        rate=self.burst_rate_hz,
+                        sample_mode=nidaqmx.constants.AcquisitionType.FINITE,
+                        samps_per_chan=n,
+                    )
+                data = task.read(number_of_samples_per_channel=n, timeout=n / self.burst_rate_hz + 2.0)
 
             if isinstance(data, (list, tuple)) and len(data) >= 2:
-                v1_raw = data[0]
-                v2_raw = data[1]
-                v1 = float(v1_raw[0] if hasattr(v1_raw, "__getitem__") else v1_raw)
-                v2 = float(v2_raw[0] if hasattr(v2_raw, "__getitem__") else v2_raw)
-                return v1, v2
+                s1 = [float(x) for x in (data[0] if hasattr(data[0], "__len__") else [data[0]])]
+                s2 = [float(x) for x in (data[1] if hasattr(data[1], "__len__") else [data[1]])]
+                self.last_peaks = (max(abs(x) for x in s1), max(abs(x) for x in s2))
+                return sum(s1) / len(s1), sum(s2) / len(s2)
 
             raise RuntimeError(f"Unexpected data format from DAQ: {type(data)}")
         except Exception as e:
@@ -177,6 +206,12 @@ class PowerMonitorApp:
 
         self.wavelengths: Dict[str, float] = load_last_wavelengths()
         self.wavelength_entries: Dict[str, tk.Entry] = {}
+        saved_lw = load_settings().get("linewidth_nm", {})
+        self.linewidths: Dict[str, float] = {
+            name: float(saved_lw.get(name, 0.0)) if isinstance(saved_lw, dict) else 0.0
+            for name in DETECTOR_NAMES
+        }
+        self.linewidth_entries: Dict[str, tk.Entry] = {}
         self.detectors: Dict[str, DetectorCalibration] = {
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
@@ -229,20 +264,32 @@ class PowerMonitorApp:
         self.ent_ch2.grid(row=0, column=5, sticky="w")
         self.ent_ch2.insert(0, "ai0")
 
+        tk.Label(cfg_frame, text="Avg samples:").grid(row=0, column=6, sticky="e")
+        self.ent_burst_samples = tk.Entry(cfg_frame, width=6)
+        self.ent_burst_samples.grid(row=0, column=7, sticky="w")
+        self.ent_burst_samples.insert(0, str(DEFAULT_BURST_SAMPLES))
+
+        tk.Label(cfg_frame, text="Rate (Hz):").grid(row=0, column=8, sticky="e")
+        self.ent_burst_rate = tk.Entry(cfg_frame, width=7)
+        self.ent_burst_rate.grid(row=0, column=9, sticky="w")
+        self.ent_burst_rate.insert(0, f"{DEFAULT_BURST_RATE_HZ:g}")
+
+        init_row = tk.Frame(cfg_frame)
+        init_row.grid(row=1, column=0, columnspan=10, sticky="w")
         self.btn_init = tk.Button(
-            cfg_frame,
+            init_row,
             text="Initialize DAQ",
             command=self.init_daq,
             bg="#dddddd",
         )
-        self.btn_init.grid(row=0, column=6, sticky="w")
+        self.btn_init.pack(side="left")
 
-        self.lbl_status = tk.Label(cfg_frame, text="DAQ: Not initialized", fg="red")
-        self.lbl_status.grid(row=0, column=7, sticky="w")
+        self.lbl_status = tk.Label(init_row, text="DAQ: Not initialized", fg="red")
+        self.lbl_status.pack(side="left", padx=8)
 
         # Optics between the beam sampler and the objective, one dropdown per slot
         optics_row = tk.Frame(cfg_frame)
-        optics_row.grid(row=1, column=0, columnspan=8, sticky="w")
+        optics_row.grid(row=2, column=0, columnspan=10, sticky="w")
         for slot, spec in self.path_model.slots.items():
             tk.Label(optics_row, text=f"{slot}:").pack(side="left", padx=(0, 3))
             var = tk.StringVar(value=self.path_model.installed[slot])
@@ -258,11 +305,11 @@ class PowerMonitorApp:
         ):
             tk.Button(optics_row, text=text, command=cmd).pack(side="left", padx=2)
 
-        tk.Label(cfg_frame, text="Calibration:").grid(row=2, column=0, sticky="e")
+        tk.Label(cfg_frame, text="Calibration:").grid(row=3, column=0, sticky="e")
         self.lbl_cal_source = tk.Label(
             cfg_frame, text="", anchor="w", justify="left", wraplength=620, font=("Arial", 10, "bold")
         )
-        self.lbl_cal_source.grid(row=2, column=1, columnspan=7, sticky="w")
+        self.lbl_cal_source.grid(row=3, column=1, columnspan=9, sticky="w")
 
         for child in cfg_frame.winfo_children():
             child.grid_configure(padx=3, pady=3)
@@ -297,6 +344,8 @@ class PowerMonitorApp:
         )
         self.lbl_pda50b2_voltage = tk.Label(display_frame, text="--",font=("Arial", 40, "bold"))
         self.lbl_pda50b2_voltage.grid(row=1, column=1, sticky="w", padx=5, pady=2)
+        self.lbl_pda50b2_sat = tk.Label(display_frame, text="", fg="#cc0000", font=("Arial", 10, "bold"))
+        self.lbl_pda50b2_sat.grid(row=0, column=1, sticky="e", padx=5)
 
         # PDA100A2
         tk.Label(display_frame, text="PDA100A2 Power (mW):", font=("Arial", 11, "bold")).grid(
@@ -324,6 +373,8 @@ class PowerMonitorApp:
         )
         self.lbl_pda100a2_voltage = tk.Label(display_frame, text="--")
         self.lbl_pda100a2_voltage.grid(row=3, column=1, sticky="w", padx=5, pady=2)
+        self.lbl_pda100a2_sat = tk.Label(display_frame, text="", fg="#cc0000", font=("Arial", 10, "bold"))
+        self.lbl_pda100a2_sat.grid(row=2, column=1, sticky="e", padx=5)
 
         for child in display_frame.winfo_children():
             child.grid_configure(padx=5, pady=3)
@@ -394,12 +445,21 @@ class PowerMonitorApp:
             return
 
         try:
+            n_burst = int(self.ent_burst_samples.get())
+            rate = float(self.ent_burst_rate.get())
+            if n_burst < 1 or rate <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Error", "Avg samples must be an integer >= 1 and Rate a number > 0.")
+            return
+
+        try:
             # Test connection by reading once.
-            test_ctrl = PhotodetectorController(device, ch1, ch2)
+            test_ctrl = PhotodetectorController(device, ch1, ch2, burst_samples=n_burst, burst_rate_hz=rate)
             v1, v2 = test_ctrl.read_both_detectors()
 
             # If we get here, DAQ is working; keep a controller instance.
-            self.detector_ctrl = PhotodetectorController(device, ch1, ch2)
+            self.detector_ctrl = test_ctrl
             self.lbl_status.config(
                 text=f"DAQ: Initialized ({device}, {ch1}, {ch2})",
                 fg="green",
@@ -416,7 +476,22 @@ class PowerMonitorApp:
             self.btn_stop.config(state="disabled")
             messagebox.showerror("DAQ Error", str(e))
 
+    def saturated_detectors(self) -> List[str]:
+        """Detectors whose last burst came within SATURATION_FRACTION of their output or DAQ limit."""
+        if self.detector_ctrl is None:
+            return []
+        ctrl = self.detector_ctrl
+        out = []
+        for name, peak in zip(DETECTOR_NAMES, ctrl.last_peaks):
+            limit = min(DETECTOR_MAX_OUTPUT_V[name], ctrl.max_voltage)
+            if peak >= SATURATION_FRACTION * limit:
+                out.append(name)
+        return out
+
     def _show_readings(self, v1: float, v2: float) -> None:
+        saturated = self.saturated_detectors()
+        self.lbl_pda50b2_sat.config(text="SATURATED" if "PDA50B2" in saturated else "")
+        self.lbl_pda100a2_sat.config(text="SATURATED" if "PDA100A2" in saturated else "")
         self.last_voltages = (v1, v2)
         self.lbl_pda50b2_voltage.config(text=f"{v1:.4f}")
         self.lbl_pda100a2_voltage.config(text=f"{v2:.4f}")
@@ -426,15 +501,16 @@ class PowerMonitorApp:
     def _voltage_to_mw(self, detector: str, voltage: float) -> float:
         """Convert voltage (V) to power at the objective (mW) at the current wavelength and optics."""
         wl = self.wavelengths[detector]
-        t_path = self.path_model.transmission(detector, wl)
-        return self.detectors[detector].voltage_to_mw(voltage, wl, t_path)
+        lw = self.linewidths[detector]
+        t_path = self.path_model.transmission(detector, wl, linewidth_nm=lw)
+        return self.detectors[detector].voltage_to_mw(voltage, wl, t_path, lw)
 
     def _wire_detectors(self) -> None:
         """Let each detector's calibration look up the path transmission of its recorded points."""
         for name, det in self.detectors.items():
             # Points without a recorded path predate path support: treat as no optics.
             det.point_transmission = lambda p, n=name: (
-                self.path_model.transmission(n, p.wavelength_nm, p.path) if p.path else 1.0
+                self.path_model.transmission(n, p.wavelength_nm, p.path, p.linewidth_nm) if p.path else 1.0
             )
 
     def set_installed_optic(self, slot: str) -> None:
@@ -457,6 +533,36 @@ class PowerMonitorApp:
         ent.bind("<Return>", lambda _e: self.set_wavelength(name))
         ent.bind("<FocusOut>", lambda _e: self.set_wavelength(name))
         self.wavelength_entries[name] = ent
+
+        tk.Label(parent, text="Linewidth (nm):").grid(row=row + 1, column=2, sticky="ne", padx=5)
+        lw = tk.Entry(parent, width=8)
+        lw.grid(row=row + 1, column=3, sticky="nw", padx=5)
+        lw.insert(0, f"{self.linewidths[name]:g}")
+        lw.bind("<Return>", lambda _e: self.set_linewidth(name))
+        lw.bind("<FocusOut>", lambda _e: self.set_linewidth(name))
+        self.linewidth_entries[name] = lw
+        _attach_tooltip(lw, "Source spectral width (flat top). 0 for a narrow line.")
+
+    def set_linewidth(self, name: str) -> None:
+        ent = self.linewidth_entries[name]
+        text = ent.get().strip()
+        try:
+            lw = float(text)
+            if lw < 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Linewidth", f"Invalid {name} linewidth: {text!r}")
+            ent.delete(0, tk.END)
+            ent.insert(0, f"{self.linewidths[name]:g}")
+            return
+        if lw == self.linewidths[name]:
+            return
+        self.linewidths[name] = lw
+        try:
+            update_settings({"linewidth_nm": self.linewidths})
+        except OSError:
+            pass  # remembering the linewidth is a convenience; don't block on it
+        self._refresh_conversion_display()
 
     def set_wavelength(self, name: str) -> None:
         ent = self.wavelength_entries[name]
@@ -483,16 +589,19 @@ class PowerMonitorApp:
         """Tooltip text describing how this detector's voltage becomes power."""
         det = self.detectors[name]
         wl = self.wavelengths[name]
+        lw = self.linewidths[name]
         k, offset = det.factor_and_offset(wl)
-        t_path = self.path_model.transmission(name, wl)
-        lines = [f"{name} at {wl:g} nm, power at objective"]
+        k *= det.band_factor(wl, lw)
+        t_path = self.path_model.transmission(name, wl, linewidth_nm=lw)
+        band = f" (linewidth {lw:g} nm)" if lw > 0 else ""
+        lines = [f"{name} at {wl:g} nm{band}, power at objective"]
         if t_path > 0:
             lines.append(f"Overall: {k / t_path:.4g} V/mW")
         lines.append(f"Detector: {k:.4g} V/mW")
         if offset:
             lines.append(f"Offset: {offset * 1000:+.2f} mV")
         lines.append(f"Optics to objective: {t_path * 100:.1f}%")
-        lines.extend("  " + line for line in self.path_model.describe(name, wl))
+        lines.extend("  " + line for line in self.path_model.describe(name, wl, linewidth_nm=lw))
         if t_path < 0.05:
             lines.append("Note: almost no light reaches the objective on this path at this wavelength")
         if det.is_calibrated:
@@ -513,6 +622,18 @@ class PowerMonitorApp:
             lines.append("Source: fixed factor, no responsivity curve")
         if self.calibration_path is not None:
             lines.append(f"File: {self.calibration_path}")
+        if self.detector_ctrl is not None:
+            ctrl = self.detector_ctrl
+            peak = ctrl.last_peaks[DETECTOR_NAMES.index(name)]
+            lines.append(
+                f"Averaging: {ctrl.burst_samples} samples at {ctrl.burst_rate_hz:g} Hz, peak |V| {peak:.3f} V"
+            )
+            if name in self.saturated_detectors():
+                limit = min(DETECTOR_MAX_OUTPUT_V[name], ctrl.max_voltage)
+                lines.append(
+                    f"SATURATED: peak is within {(1 - SATURATION_FRACTION) * 100:.0f}% of {limit:g} V. "
+                    "Lower the detector gain or the power."
+                )
         return "\n".join(lines)
 
     def _refresh_conversion_display(self) -> None:
@@ -638,16 +759,23 @@ class PowerMonitorApp:
         self.calibration_window = CalibrationWindow(self)
 
     def read_average_voltages(self, n_samples: int) -> Tuple[float, float]:
-        """Average n_samples reads of both detectors. Raises RuntimeError if the DAQ is unavailable."""
+        """Average n_samples burst reads of both detectors. Raises RuntimeError if the DAQ is unavailable.
+
+        Afterwards, detector_ctrl.last_peaks holds the largest |V| over all bursts.
+        """
         if self.detector_ctrl is None:
             raise RuntimeError("Initialize DAQ first.")
         if santec_daq_busy() and not self.var_ignore_santec_lock.get():
             raise RuntimeError("qt3santec has the DAQ (scan in progress).")
         v1s, v2s = [], []
+        peak1 = peak2 = 0.0
         for _ in range(max(1, n_samples)):
             v1, v2 = self.detector_ctrl.read_both_detectors()
             v1s.append(v1)
             v2s.append(v2)
+            peak1 = max(peak1, self.detector_ctrl.last_peaks[0])
+            peak2 = max(peak2, self.detector_ctrl.last_peaks[1])
+        self.detector_ctrl.last_peaks = (peak1, peak2)
         return sum(v1s) / len(v1s), sum(v2s) / len(v2s)
 
     def _set_power_widgets_paused(self, paused: bool) -> None:
@@ -763,6 +891,10 @@ class CalibrationWindow:
         self.ent_wl = tk.Entry(frm, width=10)
         self.ent_wl.grid(row=1, column=1, sticky="w", padx=3, pady=2)
         self.ent_wl.insert(0, f"{app.wavelengths[DETECTOR_NAMES[0]]:g}")
+        tk.Label(frm, text="Linewidth (nm):").grid(row=1, column=2, sticky="e")
+        self.ent_lw = tk.Entry(frm, width=6)
+        self.ent_lw.grid(row=1, column=3, sticky="w", padx=3)
+        self.ent_lw.insert(0, f"{app.linewidths[DETECTOR_NAMES[0]]:g}")
 
         tk.Label(frm, text="Power at objective (mW):").grid(row=2, column=0, sticky="e")
         self.ent_power = tk.Entry(frm, width=10)
@@ -772,10 +904,10 @@ class CalibrationWindow:
         self.ent_voltage = tk.Entry(frm, width=10)
         self.ent_voltage.grid(row=3, column=1, sticky="w", padx=3, pady=2)
         tk.Button(frm, text="Read DAQ", command=self.read_daq).grid(row=3, column=2, padx=3)
-        tk.Label(frm, text="Samples:").grid(row=3, column=3, sticky="e")
+        tk.Label(frm, text="Bursts:").grid(row=3, column=3, sticky="e")
         self.ent_samples = tk.Entry(frm, width=5)
         self.ent_samples.grid(row=3, column=4, sticky="w", padx=3)
-        self.ent_samples.insert(0, "20")
+        self.ent_samples.insert(0, "10")
 
         tk.Button(frm, text="Add Point", command=self.add_point, bg="#ccffcc").grid(
             row=4, column=1, sticky="w", padx=3, pady=5
@@ -801,6 +933,8 @@ class CalibrationWindow:
     def _on_detector_change(self) -> None:
         self.ent_wl.delete(0, tk.END)
         self.ent_wl.insert(0, f"{self.app.wavelengths[self.var_detector.get()]:g}")
+        self.ent_lw.delete(0, tk.END)
+        self.ent_lw.insert(0, f"{self.app.linewidths[self.var_detector.get()]:g}")
         self.refresh()
 
     def _detector(self) -> DetectorCalibration:
@@ -813,23 +947,32 @@ class CalibrationWindow:
         except Exception as e:
             messagebox.showerror("Read DAQ", str(e), parent=self.win)
             return
-        v = v1 if self.var_detector.get() == "PDA50B2" else v2
+        name = self.var_detector.get()
+        v = v1 if name == "PDA50B2" else v2
         self.ent_voltage.delete(0, tk.END)
         self.ent_voltage.insert(0, f"{v:.5f}")
+        if name in self.app.saturated_detectors():
+            messagebox.showwarning(
+                "Read DAQ",
+                f"{name} saturated during this reading, so the average is not reliable. "
+                "Lower the detector gain or the power before adding this point.",
+                parent=self.win,
+            )
 
     def add_point(self) -> None:
         try:
             wl = float(self.ent_wl.get())
+            linewidth = float(self.ent_lw.get() or 0)
             power = float(self.ent_power.get())
             voltage = float(self.ent_voltage.get())
-            if wl <= 0 or power <= 0:
-                raise ValueError("wavelength and power must be > 0")
+            if wl <= 0 or power <= 0 or linewidth < 0:
+                raise ValueError("wavelength and power must be > 0, linewidth >= 0")
         except ValueError as e:
             messagebox.showerror("Add Point", f"Check wavelength, power and voltage: {e}", parent=self.win)
             return
         name = self.var_detector.get()
         path = dict(self.app.path_model.installed)
-        t_path = self.app.path_model.transmission(name, wl, path)
+        t_path = self.app.path_model.transmission(name, wl, path, linewidth)
         if t_path < MIN_PATH_TRANSMISSION:
             messagebox.showerror(
                 "Add Point",
@@ -838,7 +981,7 @@ class CalibrationWindow:
                 parent=self.win,
             )
             return
-        self._detector().points.append(CalibrationPoint(wl, power, voltage, path))
+        self._detector().points.append(CalibrationPoint(wl, power, voltage, path, linewidth))
         self.app.calibration_dirty = True
         self.ent_power.delete(0, tk.END)
         self.ent_voltage.delete(0, tk.END)
@@ -861,7 +1004,8 @@ class CalibrationWindow:
             self.tree.insert(
                 "", "end", iid=str(i),
                 values=(
-                    f"{p.wavelength_nm:g}", f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}",
+                    f"{p.wavelength_nm:g}" + (f" (w {p.linewidth_nm:g})" if p.linewidth_nm else ""),
+                    f"{p.power_mw:.5g}", f"{p.voltage_v:.5f}", f"{k:.4g}",
                     self.app.path_model.label(p.path) if p.path else "(not recorded)",
                 ),
             )

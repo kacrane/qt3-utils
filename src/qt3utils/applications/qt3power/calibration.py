@@ -27,6 +27,12 @@ Optics path (see paths.py):
         power_mW = (voltage_V - offset_V) / k * T_path_now
     so swapping an optic rescales the calibration instead of invalidating it.
 
+Linewidth (broadband sources such as the SuperK CHROMATUNE):
+    For a flat-top spectrum of width w around the center wavelength, the
+    detector factor and the path transmission are averaged over the band
+    instead of taken at the center. Each calibration point records its
+    linewidth so it is normalized the same way.
+
 Pure Python/numpy, no tkinter or nidaqmx, so it can be tested off the lab PC.
 """
 
@@ -100,6 +106,17 @@ DEFAULT_REF_WAVELENGTH_NM: Dict[str, float] = {
 }
 
 
+# Number of wavelengths used to average curves over a linewidth.
+BAND_SAMPLES = 41
+
+
+def band_wavelengths(center_nm: float, linewidth_nm: float) -> np.ndarray:
+    """Wavelengths spanning a flat-top band; just the center for zero linewidth."""
+    if linewidth_nm <= 0:
+        return np.array([center_nm])
+    return np.linspace(center_nm - linewidth_nm / 2, center_nm + linewidth_nm / 2, BAND_SAMPLES)
+
+
 # Points whose path let through less than this are ignored in fits: dividing by
 # a near-zero transmission would blow up any error in the curve.
 MIN_PATH_TRANSMISSION = 0.01
@@ -111,6 +128,7 @@ class CalibrationPoint:
     power_mw: float  # known power at the objective
     voltage_v: float
     path: Dict[str, str] = field(default_factory=dict)  # slot -> optic installed when measured
+    linewidth_nm: float = 0.0  # source linewidth when measured (0 = narrow line)
 
 
 def _unity_transmission(_point: "CalibrationPoint") -> float:
@@ -165,6 +183,13 @@ class DetectorCalibration:
             / self.responsivity(self.ref_wavelength_nm)
         )
 
+    def band_factor(self, wavelength_nm: float, linewidth_nm: float) -> float:
+        """Band-averaged default factor divided by the factor at the center (1.0 for zero width)."""
+        if linewidth_nm <= 0:
+            return 1.0
+        band = band_wavelengths(wavelength_nm, linewidth_nm)
+        return float(np.mean([self.default_factor(w) for w in band]) / self.default_factor(wavelength_nm))
+
     def fit_by_wavelength(self) -> List[Tuple[float, float, float, int]]:
         """
         Fit the measured points at each wavelength.
@@ -177,8 +202,10 @@ class DetectorCalibration:
             t = self.point_transmission(p)
             if t < MIN_PATH_TRANSMISSION:
                 continue
-            # Power the detector model sees: power at objective with the path removed.
-            groups.setdefault(round(float(p.wavelength_nm), 3), []).append((p.power_mw / t, p.voltage_v))
+            # Power the detector model sees at the center wavelength: power at the
+            # objective with the path removed, corrected for the linewidth.
+            p_eq = p.power_mw / t * self.band_factor(p.wavelength_nm, p.linewidth_nm)
+            groups.setdefault(round(float(p.wavelength_nm), 3), []).append((p_eq, p.voltage_v))
 
         fits = []
         for wl in sorted(groups):
@@ -206,9 +233,16 @@ class DetectorCalibration:
         offset = float(np.interp(wavelength_nm, wls, offsets))
         return ratio * k_default, offset
 
-    def voltage_to_mw(self, voltage_v: float, wavelength_nm: float, path_transmission: float = 1.0) -> float:
-        """Power in mW after a path with this transmission (1.0 = power the detector model sees)."""
+    def voltage_to_mw(
+        self,
+        voltage_v: float,
+        wavelength_nm: float,
+        path_transmission: float = 1.0,
+        linewidth_nm: float = 0.0,
+    ) -> float:
+        """Power in mW after a path with this (band-averaged) transmission; 1.0 = power the detector model sees."""
         k, offset = self.factor_and_offset(wavelength_nm)
+        k *= self.band_factor(wavelength_nm, linewidth_nm)
         return (voltage_v - offset) / k * path_transmission
 
     def calibrated_range(self) -> Optional[Tuple[float, float]]:
@@ -236,6 +270,7 @@ class DetectorCalibration:
                     power_mw=float(p["power_mw"]),
                     voltage_v=float(p["voltage_v"]),
                     path=dict(p.get("path", {})),
+                    linewidth_nm=float(p.get("linewidth_nm", 0.0)),
                 )
                 for p in d.get("points", [])
             ],

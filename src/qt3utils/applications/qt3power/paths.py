@@ -28,7 +28,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from qt3utils.applications.qt3power.calibration import optics_label
+from qt3utils.applications.qt3power.calibration import band_wavelengths, optics_label
 
 OPTICS_DIR = Path(__file__).parent / "optics"
 PATH_CONFIG_PATH = Path.home() / ".qt3utils" / "qt3power_paths.json"
@@ -112,18 +112,36 @@ class PathModel:
     def _detector_spec(self, detector: str) -> dict:
         return self.config["detectors"].get(detector, {"modes": {}, "polarization": "unpolarized"})
 
-    def transmission(self, detector: str, wavelength_nm: float, installed: Optional[Dict[str, str]] = None) -> float:
-        """T_path for this detector. installed defaults to the current slot choices."""
+    def transmission(
+        self,
+        detector: str,
+        wavelength_nm: float,
+        installed: Optional[Dict[str, str]] = None,
+        linewidth_nm: float = 0.0,
+    ) -> float:
+        """T_path for this detector, averaged over a flat-top band of linewidth_nm.
+
+        installed defaults to the current slot choices.
+        """
         installed = self.installed if installed is None else installed
         spec = self._detector_spec(detector)
         pol = spec.get("polarization", "unpolarized")
-        t = 1.0
-        for slot, mode in spec.get("modes", {}).items():
-            optic = installed.get(slot, NO_OPTIC)
-            t *= optic_fraction(optic, mode, pol, wavelength_nm)
-        return t
+        totals = []
+        for wl in band_wavelengths(wavelength_nm, linewidth_nm):
+            t = 1.0
+            for slot, mode in spec.get("modes", {}).items():
+                optic = installed.get(slot, NO_OPTIC)
+                t *= optic_fraction(optic, mode, pol, wl)
+            totals.append(t)
+        return float(np.mean(totals))
 
-    def describe(self, detector: str, wavelength_nm: float, installed: Optional[Dict[str, str]] = None) -> List[str]:
+    def describe(
+        self,
+        detector: str,
+        wavelength_nm: float,
+        installed: Optional[Dict[str, str]] = None,
+        linewidth_nm: float = 0.0,
+    ) -> List[str]:
         """One line per slot for tooltips, e.g. 'Dichroic: DMLP950 reflect (unpolarized) 97.1%'."""
         installed = self.installed if installed is None else installed
         spec = self._detector_spec(detector)
@@ -134,7 +152,7 @@ class PathModel:
             if optic == NO_OPTIC:
                 lines.append(f"{slot}: none")
                 continue
-            frac = optic_fraction(optic, mode, pol, wavelength_nm)
+            frac = float(np.mean([optic_fraction(optic, mode, pol, w) for w in band_wavelengths(wavelength_nm, linewidth_nm)]))
             lines.append(f"{slot}: {optic} {mode} ({pol}) {frac * 100:.1f}%")
         return lines
 
