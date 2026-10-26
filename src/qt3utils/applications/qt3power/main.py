@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, filedialog, ttk
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -28,6 +29,11 @@ from qt3utils.applications.qt3power.calibration import (
     save_last_wavelengths,
     update_settings,
 )
+from qt3utils.applications.qt3power.superk import (
+    DEFAULT_CONNECTION as SUPERK_DEFAULT_CONNECTION,
+    SuperKSettings,
+    read_superk_settings,
+)
 from qt3utils.applications.qt3power.paths import (
     DEFAULT_PATH_CONFIG,
     PATH_CONFIG_PATH,
@@ -46,6 +52,10 @@ DEFAULT_BURST_RATE_HZ = 9973.0
 # Detector output limit (V, high-impedance load; halve for 50 ohm). A burst whose
 # largest sample reaches SATURATION_FRACTION of this, or of the DAQ range, is
 # flagged: the average is then not linear in power.
+# The SuperK CHROMATUNE is read by this detector; "Read SuperK" fills its boxes.
+SUPERK_DETECTOR = "PDA100A2"
+SUPERK_AUTO_INTERVAL_MS = 5000
+
 DETECTOR_MAX_OUTPUT_V = {"PDA50B2": 10.0, "PDA100A2": 10.0}
 SATURATION_FRACTION = 0.95
 
@@ -212,6 +222,12 @@ class PowerMonitorApp:
             for name in DETECTOR_NAMES
         }
         self.linewidth_entries: Dict[str, tk.Entry] = {}
+        saved_superk = load_settings().get("superk", {})
+        self.superk_connection = dict(SUPERK_DEFAULT_CONNECTION)
+        if isinstance(saved_superk, dict):
+            self.superk_connection.update(saved_superk)
+        self.superk_busy = False
+        self.var_superk_auto = tk.BooleanVar(value=False)
         self.detectors: Dict[str, DetectorCalibration] = {
             name: DetectorCalibration(name) for name in DETECTOR_NAMES
         }
@@ -363,6 +379,7 @@ class PowerMonitorApp:
         )
         self.lbl_pda100a2_power.grid(row=2, column=1, sticky="w", padx=5, pady=10)
         self._build_wavelength_entry(display_frame, "PDA100A2", row=2)
+        self._build_superk_controls(display_frame, row=2)
 
         tk.Label(display_frame, text="Voltage (V):").grid(
             row=3,
@@ -543,6 +560,131 @@ class PowerMonitorApp:
         self.linewidth_entries[name] = lw
         _attach_tooltip(lw, "Source spectral width (flat top). 0 for a narrow line.")
 
+    # ---- SuperK CHROMATUNE (read-only) ----
+
+    def _build_superk_controls(self, parent: tk.Widget, row: int) -> None:
+        frm = tk.Frame(parent)
+        frm.grid(row=row, column=4, rowspan=2, sticky="nw", padx=5)
+        top = tk.Frame(frm)
+        top.pack(anchor="w")
+        tk.Button(top, text="Read SuperK", command=lambda: self.read_superk(manual=True)).pack(side="left")
+        tk.Button(top, text="...", width=2, command=self.open_superk_settings).pack(side="left", padx=2)
+        tk.Checkbutton(
+            frm, text="Auto", variable=self.var_superk_auto, command=self._on_superk_auto_toggle
+        ).pack(anchor="w")
+        self.lbl_superk = tk.Label(frm, text="", fg="#555555", font=("Arial", 8), justify="left")
+        self.lbl_superk.pack(anchor="w")
+
+    def read_superk(self, manual: bool = False) -> None:
+        """Read center/bandwidth/rep rate in a background thread, then fill the PDA100A2 boxes."""
+        if self.superk_busy:
+            return
+        self.superk_busy = True
+        self.lbl_superk.config(text="Reading...")
+        conn = dict(self.superk_connection)
+        outcome: Dict[str, object] = {}
+
+        def worker() -> None:
+            # No Tk calls here: Tk is not thread safe. The main thread polls outcome.
+            try:
+                outcome["result"] = read_superk_settings(conn)
+            except Exception as e:
+                outcome["error"] = e
+
+        thread = threading.Thread(target=worker, daemon=True)
+        thread.start()
+
+        def poll() -> None:
+            if thread.is_alive():
+                self.root.after(50, poll)
+                return
+            self.superk_busy = False
+            if "result" in outcome:
+                self._apply_superk(outcome["result"])
+            else:
+                self._superk_failed(outcome.get("error", RuntimeError("unknown error")), manual)
+
+        self.root.after(50, poll)
+
+    def _apply_superk(self, result: SuperKSettings) -> None:
+        name = SUPERK_DETECTOR
+        for entry, value, setter in (
+            (self.wavelength_entries[name], result.center_nm, self.set_wavelength),
+            (self.linewidth_entries[name], result.bandwidth_nm, self.set_linewidth),
+        ):
+            entry.delete(0, tk.END)
+            entry.insert(0, f"{value:g}")
+            setter(name)
+        rep = f"{result.rep_rate_mhz:.3g} MHz" if result.rep_rate_mhz else "rep rate n/a"
+        emission = {True: "on", False: "off", None: "?"}[result.emission_on]
+        self.superk_last = result
+        self.lbl_superk.config(text=f"{rep}, emission {emission}\nread {time.strftime('%H:%M:%S')}")
+
+    def _superk_failed(self, error: Exception, manual: bool) -> None:
+        self.lbl_superk.config(text=f"Read failed {time.strftime('%H:%M:%S')}")
+        if manual:
+            messagebox.showerror("Read SuperK", str(error))
+        elif self.var_superk_auto.get():
+            # Don't keep hammering a busy or unreachable link with popups; stop auto.
+            self.var_superk_auto.set(False)
+            messagebox.showwarning("Read SuperK", f"{error}\n\nAuto read turned off.")
+
+    def _on_superk_auto_toggle(self) -> None:
+        if self.var_superk_auto.get():
+            self._superk_auto_tick()
+
+    def _superk_auto_tick(self) -> None:
+        if not self.var_superk_auto.get():
+            return
+        self.read_superk(manual=False)
+        self.root.after(SUPERK_AUTO_INTERVAL_MS, self._superk_auto_tick)
+
+    def open_superk_settings(self) -> None:
+        win = tk.Toplevel(self.root)
+        win.title("SuperK connection")
+        entries = {}
+        fields = (
+            ("host_ip", "This PC's IP"),
+            ("host_port", "Host port"),
+            ("laser_ip", "Laser IP"),
+            ("laser_port", "Laser port"),
+            ("timeout_ms", "Timeout (ms)"),
+        )
+        for i, (key, label) in enumerate(fields):
+            tk.Label(win, text=f"{label}:").grid(row=i, column=0, sticky="e", padx=5, pady=2)
+            ent = tk.Entry(win, width=16)
+            ent.grid(row=i, column=1, sticky="w", padx=5, pady=2)
+            ent.insert(0, str(self.superk_connection[key]))
+            entries[key] = ent
+        tk.Label(
+            win,
+            text="Read-only: qt3power never writes to the laser.\n"
+            "Close NKT CONTROL's Ethernet connection first.",
+            fg="#555555",
+            justify="left",
+        ).grid(row=len(fields), column=0, columnspan=2, sticky="w", padx=5, pady=4)
+
+        def save() -> None:
+            try:
+                new = {
+                    "host_ip": entries["host_ip"].get().strip(),
+                    "host_port": int(entries["host_port"].get()),
+                    "laser_ip": entries["laser_ip"].get().strip(),
+                    "laser_port": int(entries["laser_port"].get()),
+                    "timeout_ms": int(entries["timeout_ms"].get()),
+                }
+            except ValueError:
+                messagebox.showerror("SuperK connection", "Ports and timeout must be integers.", parent=win)
+                return
+            self.superk_connection = new
+            try:
+                update_settings({"superk": new})
+            except OSError:
+                pass
+            win.destroy()
+
+        tk.Button(win, text="Save", command=save).grid(row=len(fields) + 1, column=1, sticky="e", padx=5, pady=5)
+
     def set_linewidth(self, name: str) -> None:
         ent = self.linewidth_entries[name]
         text = ent.get().strip()
@@ -622,6 +764,12 @@ class PowerMonitorApp:
             lines.append("Source: fixed factor, no responsivity curve")
         if self.calibration_path is not None:
             lines.append(f"File: {self.calibration_path}")
+        superk_last = getattr(self, "superk_last", None)
+        if name == SUPERK_DETECTOR and superk_last is not None:
+            rep = f"{superk_last.rep_rate_mhz:.3g} MHz" if superk_last.rep_rate_mhz else "n/a"
+            lines.append(
+                f"SuperK (last read): {superk_last.center_nm:g} nm, {superk_last.bandwidth_nm:g} nm wide, rep {rep}"
+            )
         if self.detector_ctrl is not None:
             ctrl = self.detector_ctrl
             peak = ctrl.last_peaks[DETECTOR_NAMES.index(name)]
@@ -853,6 +1001,7 @@ class PowerMonitorApp:
             if answer and not self.save_calibration_dialog():
                 return
         self.running = False
+        self.var_superk_auto.set(False)
         # No persistent DAQ task is kept open in this minimal app, so nothing to close.
         self.root.destroy()
 
