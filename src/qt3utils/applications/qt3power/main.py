@@ -348,21 +348,21 @@ class PowerMonitorApp:
             self.path_vars[slot] = var
         tk.Button(optics_row, text="Calibrate...", command=self.open_calibration_window).pack(side="left", padx=2)
 
-        # One calibration file per detector: its own Load/Save/Default buttons and status.
+        # One calibration file per detector: its own Load/Default buttons and status.
+        # (Saving happens in the Calibrate window, the only place points are added.)
         cal_frame = tk.Frame(cfg_frame)
         cal_frame.grid(row=2, column=0, sticky="w")
         for r, name in enumerate(DETECTOR_NAMES):
             tk.Label(cal_frame, text=f"{name} cal:").grid(row=r, column=0, sticky="w")
             for c, (text, cmd) in enumerate((
                 ("Load...", self.load_calibration_dialog),
-                ("Save...", self.save_calibration_dialog),
                 ("Default", self.clear_calibration),
             )):
                 tk.Button(cal_frame, text=text, command=lambda f=cmd, n=name: f(n)).grid(
                     row=r, column=1 + c, padx=2, pady=1
                 )
             lbl = tk.Label(cal_frame, text="", anchor="w", justify="left", wraplength=520, font=("Arial", 10))
-            lbl.grid(row=r, column=4, sticky="w", padx=6)
+            lbl.grid(row=r, column=3, sticky="w", padx=6)
             self.cal_status_labels[name] = lbl
 
         for child in cfg_frame.winfo_children():
