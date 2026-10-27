@@ -8,19 +8,25 @@ Only one program on a PC can talk to the laser over Ethernet at a time (it
 replies to a single host port), so this fails while NKT CONTROL or qt3chromatune
 holds the Ethernet link.
 
+The NKT DLL creates Qt objects on the thread that first calls it and fails
+(openPorts -> OPFailed) when later called from another thread. So every DLL call
+runs on one long-lived worker thread.
+
 Register map taken from qt3chromatune; verify with
     python -m qt3utils.tools.test_superk_connection
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional
 
-# Defaults copied from qt3chromatune.
+# TQLM lab network: NKT CONTROL reaches the SuperK at 3.3.44.56 (checked 2026-10-27).
+# qt3chromatune's 192.168.0.209 -> 192.168.0.139 does not match this setup.
 DEFAULT_CONNECTION = {
-    "host_ip": "192.168.0.209",
+    "host_ip": "3.3.44.52",
     "host_port": 10001,
-    "laser_ip": "192.168.0.139",
+    "laser_ip": "3.3.44.56",
     "laser_port": 10001,
     "timeout_ms": 100,
 }
@@ -28,6 +34,9 @@ MAIN_MODULE = 0x0F
 FILTER_MODULE = 0x07
 SEED_REP_RATE_MHZ = 78.0  # nominal seed rate (product guide); actual may differ slightly
 PORT_NAME = "qt3power_superk"
+
+# A single worker keeps the same thread for the life of the program.
+_NKT_THREAD = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qt3power_nkt")
 
 
 @dataclass
@@ -53,6 +62,10 @@ def read_superk_settings(connection: Optional[dict] = None) -> SuperKSettings:
     """
     conn = dict(DEFAULT_CONNECTION)
     conn.update(connection or {})
+    return _NKT_THREAD.submit(_read_superk_settings, conn).result()
+
+
+def _read_superk_settings(conn: dict) -> SuperKSettings:
     try:
         import nkt_tools.NKTP_DLL as nkt
     except Exception as e:

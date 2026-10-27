@@ -13,7 +13,7 @@ watchdog (if enabled) turns emission off when communication stops; this script
 prints the watchdog setting so you can see whether that applies.
 
     python -m qt3utils.tools.test_superk_connection
-    python -m qt3utils.tools.test_superk_connection --host-ip 192.168.0.209 --laser-ip 192.168.0.139
+    python -m qt3utils.tools.test_superk_connection --host-ip 3.3.44.52 --laser-ip 3.3.44.56
 
 Requires the NKT SDK (NKTPDLL.dll) and the nkt_tools Python package.
 """
@@ -25,8 +25,8 @@ import sys
 import time
 
 # Defaults copied from qt3chromatune.
-DEFAULT_HOST_IP = "192.168.0.209"
-DEFAULT_LASER_IP = "192.168.0.139"
+DEFAULT_HOST_IP = "3.3.44.52"  # TQLM on the lab network
+DEFAULT_LASER_IP = "3.3.44.56"  # where NKT CONTROL reaches the SuperK
 DEFAULT_PORT = 10001
 MAIN_MODULE = 0x0F
 FILTER_MODULE = 0x07
