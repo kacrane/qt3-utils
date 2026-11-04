@@ -617,6 +617,7 @@ class LaserSweepApp:
     def _save_sweep_settings(self):
         try:
             data = {name: w.get() for name, w in self._sweep_setting_widgets().items()}
+            data["sweep_section_expanded"] = self.sweep_expanded
             self.SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(self.SETTINGS_PATH, "w") as f:
                 json.dump(data, f, indent=2)
@@ -628,9 +629,11 @@ class LaserSweepApp:
             with open(self.SETTINGS_PATH) as f:
                 data = json.load(f)
         except FileNotFoundError:
+            self._set_sweep_expanded(False)
             return
         except Exception as e:
             print(f"Could not read qt3santec settings: {e}")
+            self._set_sweep_expanded(False)
             return
         for name, w in self._sweep_setting_widgets().items():
             if name not in data:
@@ -648,6 +651,7 @@ class LaserSweepApp:
         self._saved_cont_laser = str(data.get("cont_laser", "Auto"))
         self._toggle_sweep_type()
         self._toggle_one_way()
+        self._set_sweep_expanded(bool(data.get("sweep_section_expanded", False)))
 
     def _build_gui(self):
         # Set minimum window size to prevent resizing when switching modes
@@ -688,7 +692,7 @@ class LaserSweepApp:
             lbl.pack(side="left", padx=8)
             ToolTip(lbl, f"{cfg['name']}\nIP {cfg['ip']}:{cfg['socket_port']}\nSwitch port {cfg['switch_port']}")
             self.laser_list_labels[cfg['name']] = lbl
-        self.root.after(250, self._poll_laser_list)
+        self._poll_id = self.root.after(250, self._poll_laser_list)
 
         status_frame = tk.Frame(main_frame)
         status_frame.pack(fill="x", padx=10, pady=(0, 5))
@@ -726,8 +730,15 @@ class LaserSweepApp:
             entry.bind("<Return>", lambda e, b=button: b.invoke())
             entry.bind("<KP_Enter>", lambda e, b=button: b.invoke())
 
+        # Collapsible sweep section: sweep type, configuration, START/STOP and visualization
+        self.btn_toggle_sweep = tk.Button(main_frame, text="\u25b6  Sweeps", anchor="w", relief="groove",
+                                          font=("Arial", 10, "bold"), command=self.toggle_sweep_section)
+        self.btn_toggle_sweep.pack(fill="x", padx=10, pady=(5, 0))
+        self.sweep_section = tk.Frame(main_frame)
+        self.sweep_expanded = False
+
         # Sweep Type Selection
-        sweep_type_frame = tk.Frame(main_frame)
+        sweep_type_frame = tk.Frame(self.sweep_section)
         sweep_type_frame.pack(fill="x", padx=10, pady=5)
         tk.Label(sweep_type_frame, text="Sweep Type:").pack(side="left", padx=5)
         self.combo_sweep_type = ttk.Combobox(sweep_type_frame, width=20, state="readonly", values=["Step Sweep", "Continuous Sweep"])
@@ -736,7 +747,7 @@ class LaserSweepApp:
         self.combo_sweep_type.bind("<<ComboboxSelected>>", self._toggle_sweep_type)
 
         # Sweep Config (Step Sweep)
-        self.sweep_frame = tk.LabelFrame(main_frame, text="Sweep Configuration")
+        self.sweep_frame = tk.LabelFrame(self.sweep_section, text="Sweep Configuration")
         self.sweep_frame.pack(fill="x", padx=10, pady=5)
 
         # Row 0: Range and Sweep direction option
@@ -784,7 +795,7 @@ class LaserSweepApp:
         for child in self.sweep_frame.winfo_children(): child.grid_configure(padx=5, pady=5)
 
         # Continuous Sweep Config
-        self.cont_sweep_frame = tk.LabelFrame(main_frame, text="Continuous Sweep Configuration")
+        self.cont_sweep_frame = tk.LabelFrame(self.sweep_section, text="Continuous Sweep Configuration")
         self.cont_sweep_frame.pack(fill="x", padx=10, pady=5)
 
         # Row 0: Range and Laser selection
@@ -832,7 +843,7 @@ class LaserSweepApp:
         self.cont_sweep_frame.pack_forget()
 
         # Actions - placed after sweep configuration sections
-        self.action_frame = tk.Frame(main_frame)
+        self.action_frame = tk.Frame(self.sweep_section)
         self.action_frame.pack(fill="x", padx=10, pady=10)
         self.btn_start = tk.Button(self.action_frame, text="START", bg="green", fg="white", font=("Arial", 10, "bold"), command=self.start_sweep_thread, state="disabled")
         self.btn_start.pack(side="left", fill="x", expand=True, padx=5)
@@ -842,7 +853,7 @@ class LaserSweepApp:
         self.lbl_experiment_status.pack(side="left", padx=15, pady=2)
 
         # Visualization Section
-        self.viz_frame = tk.LabelFrame(main_frame, text="Visualization")
+        self.viz_frame = tk.LabelFrame(self.sweep_section, text="Visualization")
         self.viz_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
         # Control panel for visualization
@@ -946,6 +957,22 @@ class LaserSweepApp:
 
     def log(self, msg):
         print(msg)
+
+    def toggle_sweep_section(self):
+        self._set_sweep_expanded(not self.sweep_expanded)
+
+    def _set_sweep_expanded(self, expanded):
+        """Show or hide the sweep section and resize the window to fit."""
+        self.sweep_expanded = bool(expanded)
+        if self.sweep_expanded:
+            self.sweep_section.pack(fill=tk.BOTH, expand=True, after=self.btn_toggle_sweep)
+            self.btn_toggle_sweep.config(text="\u25bc  Sweeps")
+            self.root.minsize(600, 500)
+        else:
+            self.sweep_section.pack_forget()
+            self.btn_toggle_sweep.config(text="\u25b6  Sweeps")
+            self.root.minsize(600, 1)
+        self.root.geometry("")  # let the window shrink or grow to its contents
 
     def _refresh_connection_status(self):
         """Update status label from ctrl.is_connected and detector_ctrl."""
@@ -1467,7 +1494,7 @@ class LaserSweepApp:
                 lbl = self.laser_list_labels[cfg['name']]
                 if lbl["text"] != text or lbl["fg"] != fg:
                     lbl.config(text=text, fg=fg)
-            self.root.after(250, self._poll_laser_list)
+            self._poll_id = self.root.after(250, self._poll_laser_list)
         except tk.TclError:
             pass  # window closed
 
@@ -2138,6 +2165,10 @@ class LaserSweepApp:
     # --- CORRECTED: Defined INSIDE the class ---
     def on_closing(self):
         self._save_sweep_settings()
+        try:
+            self.root.after_cancel(self._poll_id)
+        except Exception:
+            pass
         self.stop_flag = True
         clear_santec_daq_busy()
         # Stop any running continuous sweeps
