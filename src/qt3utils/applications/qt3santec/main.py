@@ -34,7 +34,8 @@ LASER_CONFIG = [
 ]
 
 # Laser list font colors
-LASER_COLOR_ABSENT = "#9a9a9a"    # not connected
+LASER_COLOR_ABSENT = "#9a9a9a"    # not connected (or missing while other lasers are connected)
+LASER_COLOR_NONE = "red"          # Initialize was pressed and no laser connected
 LASER_COLOR_PRESENT = "#000000"   # connected
 LASER_COLOR_SELECTED = "#c9a000"  # switch routed here, output off
 LASER_COLOR_LASING = "#1e9e1e"    # switch routed here and lasing
@@ -1433,6 +1434,7 @@ class LaserSweepApp:
             self.ent_down_sub.grid()
 
     def connect_lasers_and_switch(self):
+        self._laser_init_tried = True
         try:
             laser_msg = self.ctrl.connect()
             self.btn_connect_lasers.config(state="disabled")
@@ -1483,8 +1485,9 @@ class LaserSweepApp:
             for cfg in LASER_CONFIG:
                 laser = self.ctrl.laser_by_name(cfg['name'])
                 if laser is None:
-                    text = f"{cfg['name']} (not connected)" if not self.ctrl.is_connected else f"{cfg['name']} (not found)"
-                    fg = LASER_COLOR_ABSENT
+                    tried = getattr(self, "_laser_init_tried", False)
+                    text = f"{cfg['name']} ({'not found' if tried else 'not connected'})"
+                    fg = LASER_COLOR_NONE if tried and not self.ctrl.lasers else LASER_COLOR_ABSENT
                 else:
                     text = f"{cfg['name']} ({laser['min']:.1f}-{laser['max']:.1f} nm)"
                     if laser is self.ctrl.active_laser:
