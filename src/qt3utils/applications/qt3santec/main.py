@@ -561,6 +561,12 @@ class LaserSweepApp:
         self.btn_set_power = tk.Button(manual_frame, text="Set Power", command=self.set_manual_power, state="disabled")
         self.btn_set_power.pack(side="left", padx=5)
 
+        # Enter/Return in either box presses its Set button (does nothing until lasers are connected)
+        for entry, button in ((self.ent_manual_wav, self.btn_set_manual),
+                              (self.ent_manual_power, self.btn_set_power)):
+            entry.bind("<Return>", lambda e, b=button: b.invoke())
+            entry.bind("<KP_Enter>", lambda e, b=button: b.invoke())
+
         # Sweep Type Selection
         sweep_type_frame = tk.Frame(main_frame)
         sweep_type_frame.pack(fill="x", padx=10, pady=5)
