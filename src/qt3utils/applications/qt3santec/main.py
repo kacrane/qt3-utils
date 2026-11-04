@@ -652,7 +652,12 @@ class LaserSweepApp:
 
         self.btn_output = tk.Button(manual_frame, text="Laser OFF", width=10, bg="#888888", fg="white",
                                     font=("Arial", 9, "bold"), command=self.toggle_output, state="disabled")
-        self.btn_output.pack(side="left", padx=15)
+        self.btn_output.pack(side="left", padx=10)
+
+        tk.Label(manual_frame, text="Active Laser:").pack(side="left", padx=(10, 2))
+        self.lbl_active_laser = tk.Label(manual_frame, text="none", font=("Arial", 9, "bold"), anchor="w")
+        self.lbl_active_laser.pack(side="left", padx=2)
+        self.root.after(250, self._poll_active_laser)
 
         # Enter/Return in either box presses its Set button (does nothing until lasers are connected)
         for entry, button in ((self.ent_manual_wav, self.btn_set_manual),
@@ -1382,6 +1387,25 @@ class LaserSweepApp:
                 f"{e}\n\n"
                 "Wavelength sweeps can still run if lasers are connected; detector logging will be skipped.",
             )
+
+    def _active_laser_text(self):
+        laser = self.ctrl.active_laser
+        if not laser:
+            return "none"
+        for i, l in enumerate(self.ctrl.lasers):
+            if l is laser:
+                return f"Laser {i+1} ({laser['min']:.0f}-{laser['max']:.0f} nm)"
+        return f"switch ch {laser['port']}"
+
+    def _poll_active_laser(self):
+        """Keep the Active Laser field in step with whichever laser the switch is routed to."""
+        try:
+            text = self._active_laser_text()
+            if self.lbl_active_laser["text"] != text:
+                self.lbl_active_laser.config(text=text)
+            self.root.after(250, self._poll_active_laser)
+        except tk.TclError:
+            pass  # window closed
 
     def _show_output(self, on):
         if on:
