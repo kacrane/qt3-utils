@@ -394,6 +394,29 @@ class SantecController:
         if inst.query(":POW:STAT?").strip() == "0":
             inst.write(":POW:STAT 1")
 
+    def _output_laser(self):
+        """Active laser, or the first laser (routed through the switch) if none is active yet."""
+        if not self.lasers:
+            raise RuntimeError("No lasers connected.")
+        if not self.active_laser:
+            if self.switch:
+                self.switch.write(f"CH {self.lasers[0]['port']}")
+                time.sleep(0.2)
+            self.active_laser = self.lasers[0]
+        return self.active_laser
+
+    def get_output(self):
+        """True if the active laser's optical output is on."""
+        if not self.active_laser:
+            return False
+        return self.active_laser['obj'].query(":POW:STAT?").strip() == "1"
+
+    def set_output(self, on):
+        """Turn the active laser's optical output on or off."""
+        inst = self._output_laser()['obj']
+        inst.write(f":POW:STAT {1 if on else 0}")
+        return self.get_output()
+
     def check_continuous_range(self, start_nm, end_nm):
         """Check if start and end wavelengths are within a single laser's range.
         Returns the laser object if valid, None otherwise."""
@@ -626,6 +649,10 @@ class LaserSweepApp:
         self.ent_manual_power.pack(side="left", padx=5)
         self.btn_set_power = tk.Button(manual_frame, text="Set Power", command=self.set_manual_power, state="disabled")
         self.btn_set_power.pack(side="left", padx=5)
+
+        self.btn_output = tk.Button(manual_frame, text="Laser OFF", width=10, bg="#888888", fg="white",
+                                    font=("Arial", 9, "bold"), command=self.toggle_output, state="disabled")
+        self.btn_output.pack(side="left", padx=15)
 
         # Enter/Return in either box presses its Set button (does nothing until lasers are connected)
         for entry, button in ((self.ent_manual_wav, self.btn_set_manual),
@@ -1318,6 +1345,7 @@ class LaserSweepApp:
             self.btn_connect_lasers.config(state="disabled")
             self.btn_set_manual.config(state="normal")
             self.btn_set_power.config(state="normal")
+            self.btn_output.config(state="normal")
             self.btn_start.config(state="normal")
 
             laser_options = ["Auto"]
@@ -1355,11 +1383,33 @@ class LaserSweepApp:
                 "Wavelength sweeps can still run if lasers are connected; detector logging will be skipped.",
             )
 
+    def _show_output(self, on):
+        if on:
+            self.btn_output.config(text="Laser ON", bg="#d9822b", activebackground="#d9822b")
+        else:
+            self.btn_output.config(text="Laser OFF", bg="#888888", activebackground="#888888")
+
+    def _refresh_output(self):
+        try:
+            self._show_output(self.ctrl.get_output())
+        except Exception as e:
+            self.log(f"Could not read laser output state: {e}")
+
+    def toggle_output(self):
+        try:
+            want_on = not self.ctrl.get_output()
+            on = self.ctrl.set_output(want_on)
+            self._show_output(on)
+            self.log(f"Laser output {'ON' if on else 'OFF'}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
     def set_manual_wavelength(self):
         try:
             val = float(self.ent_manual_wav.get())
             self.ctrl.set_wavelength(val)
             self.log(f"Manual Set: {val} nm")
+            self._refresh_output()
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -1368,6 +1418,7 @@ class LaserSweepApp:
             val = float(self.ent_manual_power.get())
             self.ctrl.set_power(val)
             self.log(f"Manual Set Power: {val} dBm")
+            self._refresh_output()
         except ValueError as e:
             messagebox.showerror("Error", str(e))
         except Exception as e:
@@ -1886,7 +1937,7 @@ class LaserSweepApp:
             # Final visualization update
             if self.detector_ctrl:
                 self.root.after(0, self._update_visualization)
-            self.root.after(0, lambda: [self.btn_start.config(state="normal"), self.btn_stop.config(state="disabled")])
+            self.root.after(0, lambda: [self.btn_start.config(state="normal"), self.btn_stop.config(state="disabled"), self._refresh_output()])
 
     def run_sweep(self):
         p = self.sweep_params
@@ -1995,7 +2046,7 @@ class LaserSweepApp:
             # Final visualization update
             if self.detector_ctrl:
                 self.root.after(0, self._update_visualization)
-            self.root.after(0, lambda: [self.btn_start.config(state="normal"), self.btn_stop.config(state="disabled")])
+            self.root.after(0, lambda: [self.btn_start.config(state="normal"), self.btn_stop.config(state="disabled"), self._refresh_output()])
 
     # --- CORRECTED: Defined INSIDE the class ---
     def on_closing(self):
