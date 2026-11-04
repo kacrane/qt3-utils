@@ -1,0 +1,17 @@
+# qdllaser settings: the laser on/off is a PMOD pin on the QICK-DAWG board.
+# These should match the qickdawg notebook you use (qd.start_client(...) and
+# default_config.* lines).
+QDLLASER:
+  QickDawg:
+    host: 192.168.3.1     # board IP, the address in qd.start_client('...')
+    port: 8888
+    server_name: myqick
+    timeout_s: 10         # a call that takes longer counts as a lost link
+    health_check_s: 30    # how often the app checks the board is still there
+  Laser:
+    laser_gate_pmod: 0
+    adc_channel: 0
+    edge_counting: true
+    high_threshold: 8000
+    low_threshold: 500
+    relax_delay_tns: 50
