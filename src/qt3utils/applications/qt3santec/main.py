@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import csv
+import json
 import os
+from pathlib import Path
 from datetime import datetime
 import pyvisa
 import time
@@ -507,6 +509,70 @@ class LaserSweepApp:
         self.current_scan = 0
         
         self._build_gui()
+        self._load_sweep_settings()
+
+    # --- Sweep settings persistence (~/.qt3utils/qt3santec_settings.json) ---
+    SETTINGS_PATH = Path.home() / ".qt3utils" / "qt3santec_settings.json"
+
+    def _sweep_setting_widgets(self):
+        """Name -> widget for every sweep parameter that is remembered between sessions."""
+        return {
+            "sweep_type": self.combo_sweep_type,
+            "step_start_nm": self.ent_start,
+            "step_end_nm": self.ent_end,
+            "step_direction": self.combo_sweep_direction,
+            "step_up_time_s": self.ent_up_time,
+            "step_up_pixels": self.ent_up_pixels,
+            "step_up_subpixels": self.ent_up_sub,
+            "step_down_time_s": self.ent_down_time,
+            "step_down_pixels": self.ent_down_pixels,
+            "step_down_subpixels": self.ent_down_sub,
+            "step_scans": self.ent_scans,
+            "step_delay_s": self.ent_delay,
+            "cont_start_nm": self.ent_cont_start,
+            "cont_end_nm": self.ent_cont_end,
+            "cont_laser": self.combo_cont_laser,
+            "cont_speed_nm_per_s": self.combo_cont_speed,
+            "cont_mode": self.combo_cont_mode,
+            "cont_scans": self.ent_cont_scans,
+            "cont_delay_s": self.ent_cont_delay,
+            "cont_sample_rate_hz": self.ent_sample_rate,
+        }
+
+    def _save_sweep_settings(self):
+        try:
+            data = {name: w.get() for name, w in self._sweep_setting_widgets().items()}
+            self.SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.SETTINGS_PATH, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Could not save qt3santec settings: {e}")
+
+    def _load_sweep_settings(self):
+        try:
+            with open(self.SETTINGS_PATH) as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return
+        except Exception as e:
+            print(f"Could not read qt3santec settings: {e}")
+            return
+        for name, w in self._sweep_setting_widgets().items():
+            if name not in data:
+                continue
+            value = str(data[name])
+            if isinstance(w, ttk.Combobox):
+                values = [str(v) for v in w["values"]]
+                if values and value not in values:
+                    continue
+                w.set(value)
+            else:
+                w.delete(0, tk.END)
+                w.insert(0, value)
+        # Laser list is empty until connect; the saved choice is re-checked then
+        self._saved_cont_laser = str(data.get("cont_laser", "Auto"))
+        self._toggle_sweep_type()
+        self._toggle_one_way()
 
     def _build_gui(self):
         # Set minimum window size to prevent resizing when switching modes
@@ -1258,6 +1324,8 @@ class LaserSweepApp:
             for i, laser in enumerate(self.ctrl.lasers):
                 laser_options.append(f"Laser {i+1} ({laser['min']:.1f}-{laser['max']:.1f} nm)")
             self.combo_cont_laser["values"] = laser_options
+            saved_laser = getattr(self, "_saved_cont_laser", self.combo_cont_laser.get())
+            self.combo_cont_laser.set(saved_laser if saved_laser in laser_options else "Auto")
             self.combo_cont_laser.set("Auto")
 
             self._refresh_connection_status()
@@ -1306,6 +1374,7 @@ class LaserSweepApp:
             messagebox.showerror("Error", str(e))
 
     def start_sweep_thread(self):
+        self._save_sweep_settings()
         try:
             # Validate and convert inputs with better error messages
             start_str = self.ent_start.get().strip()
@@ -1397,6 +1466,7 @@ class LaserSweepApp:
         self.log("Stopping...")
 
     def start_continuous_sweep_thread(self):
+        self._save_sweep_settings()
         try:
             # Validate and convert inputs with better error messages
             start_str = self.ent_cont_start.get().strip()
@@ -1929,6 +1999,7 @@ class LaserSweepApp:
 
     # --- CORRECTED: Defined INSIDE the class ---
     def on_closing(self):
+        self._save_sweep_settings()
         self.stop_flag = True
         clear_santec_daq_busy()
         # Stop any running continuous sweeps
