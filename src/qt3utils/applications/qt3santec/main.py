@@ -28,10 +28,43 @@ SWITCH_PORT = 5020
 
 # Using Socket Port 5000 based on tests
 LASER_CONFIG = [
-    {'ip': '192.168.0.96', 'switch_port': 1, 'socket_port': 5000},
-    {'ip': '192.168.0.99', 'switch_port': 2, 'socket_port': 5000},
-    # {'ip': '192.168.0.97', 'switch_port': 3, 'socket_port': 5000},
+    {'name': 'TSL-1', 'ip': '192.168.0.96', 'switch_port': 1, 'socket_port': 5000},
+    {'name': 'TSL-2', 'ip': '192.168.0.99', 'switch_port': 2, 'socket_port': 5000},
+    {'name': 'TSL-3', 'ip': '192.168.0.97', 'switch_port': 3, 'socket_port': 5000},
 ]
+
+# Laser list font colors
+LASER_COLOR_ABSENT = "#9a9a9a"    # not connected
+LASER_COLOR_PRESENT = "#000000"   # connected
+LASER_COLOR_SELECTED = "#c9a000"  # switch routed here, output off
+LASER_COLOR_LASING = "#1e9e1e"    # switch routed here and lasing
+
+
+class ToolTip:
+    """Small hover tooltip for a Tk widget."""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+
+    def _show(self, event=None):
+        if self.tip:
+            return
+        x = self.widget.winfo_rootx() + 10
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(self.tip, text=self.text, background="#ffffe0", relief="solid", borderwidth=1,
+                 justify="left", padx=5, pady=3, font=("Arial", 9)).pack()
+
+    def _hide(self, event=None):
+        if self.tip:
+            self.tip.destroy()
+            self.tip = None
+
 
 # Default NI-DAQ settings for photodetectors (used by Connect System)
 DEFAULT_DAQ_DEVICE = "Dev1"
@@ -305,11 +338,13 @@ class SantecController:
                     
                     self.lasers.append({
                         'obj': inst,
+                        'name': cfg['name'],
                         'ip': cfg['ip'],
                         'port': cfg['switch_port'],
                         'min': min_wav,
                         'max': max_wav,
-                        'idn': idn
+                        'idn': idn,
+                        'lasing': inst.query(":POW:STAT?").strip() == "1",
                     })
                 except Exception as e:
                     print(f"Failed to connect to laser {cfg['ip']}: {e}")
@@ -323,6 +358,24 @@ class SantecController:
         except Exception as e:
             self.is_connected = False
             raise e
+
+    @staticmethod
+    def _write_output(laser, on):
+        """Write :POW:STAT and remember it, so the GUI can show lasing state without querying."""
+        laser['obj'].write(f":POW:STAT {1 if on else 0}")
+        laser['lasing'] = bool(on)
+
+    def _ensure_output_on(self, laser):
+        if laser['obj'].query(":POW:STAT?").strip() == "0":
+            self._write_output(laser, True)
+        else:
+            laser['lasing'] = True
+
+    def laser_by_name(self, name):
+        for laser in self.lasers:
+            if laser['name'] == name:
+                return laser
+        return None
 
     def _select_best_laser(self, target_nm):
         candidates = [l for l in self.lasers if l['min'] <= target_nm <= l['max']]
@@ -349,14 +402,14 @@ class SantecController:
         if not chosen: raise ValueError(f"{target_nm}nm is out of range.")
 
         if self.active_laser != chosen:
-            if self.active_laser: self.active_laser['obj'].write(":POW:STAT 0")
+            if self.active_laser: self._write_output(self.active_laser, False)
             self.switch.write(f"CH {chosen['port']}")
             time.sleep(0.2) 
             self.active_laser = chosen
 
         inst = chosen['obj']
         inst.write(f":WAV {target_nm}")
-        if inst.query(":POW:STAT?").strip() == "0": inst.write(":POW:STAT 1")
+        self._ensure_output_on(chosen)
 
     def set_power(self, power_value):
         """Set the optical output power level.
@@ -391,8 +444,7 @@ class SantecController:
         inst.write(f":POW {power_value}")
         
         # Ensure power is on
-        if inst.query(":POW:STAT?").strip() == "0":
-            inst.write(":POW:STAT 1")
+        self._ensure_output_on(self.active_laser)
 
     def _output_laser(self):
         """Active laser, or the first laser (routed through the switch) if none is active yet."""
@@ -409,12 +461,13 @@ class SantecController:
         """True if the active laser's optical output is on."""
         if not self.active_laser:
             return False
-        return self.active_laser['obj'].query(":POW:STAT?").strip() == "1"
+        on = self.active_laser['obj'].query(":POW:STAT?").strip() == "1"
+        self.active_laser['lasing'] = on
+        return on
 
     def set_output(self, on):
         """Turn the active laser's optical output on or off."""
-        inst = self._output_laser()['obj']
-        inst.write(f":POW:STAT {1 if on else 0}")
+        self._write_output(self._output_laser(), on)
         return self.get_output()
 
     def check_continuous_range(self, start_nm, end_nm):
@@ -446,7 +499,7 @@ class SantecController:
         
         # Switch to this laser if not already active
         if self.active_laser != laser:
-            if self.active_laser: self.active_laser['obj'].write(":POW:STAT 0")
+            if self.active_laser: self._write_output(self.active_laser, False)
             self.switch.write(f"CH {laser['port']}")
             time.sleep(0.2)
             self.active_laser = laser
@@ -458,8 +511,7 @@ class SantecController:
         inst.write(f":WAV:SWE:MOD {mode}")
         
         # Ensure power is on
-        if inst.query(":POW:STAT?").strip() == "0":
-            inst.write(":POW:STAT 1")
+        self._ensure_output_on(laser)
 
     def start_continuous_sweep(self, laser):
         """Start continuous sweep on a laser."""
@@ -624,11 +676,25 @@ class LaserSweepApp:
         )
         self.btn_connect_detectors.pack(fill="x", padx=5, pady=3)
 
+        # Laser list: grey = not connected, black = connected,
+        # yellow = switch routed to it (output off), green = routed and lasing
+        laser_list_frame = tk.Frame(main_frame)
+        laser_list_frame.pack(fill="x", padx=10, pady=(0, 2))
+        tk.Label(laser_list_frame, text="Lasers:").pack(side="left", padx=(0, 5))
+        self.laser_list_labels = {}
+        for cfg in LASER_CONFIG:
+            lbl = tk.Label(laser_list_frame, text=f"{cfg['name']} (not connected)",
+                           fg=LASER_COLOR_ABSENT, font=("Arial", 10, "bold"))
+            lbl.pack(side="left", padx=8)
+            ToolTip(lbl, f"{cfg['name']}\nIP {cfg['ip']}:{cfg['socket_port']}\nSwitch port {cfg['switch_port']}")
+            self.laser_list_labels[cfg['name']] = lbl
+        self.root.after(250, self._poll_laser_list)
+
         status_frame = tk.Frame(main_frame)
         status_frame.pack(fill="x", padx=10, pady=(0, 5))
         self.lbl_status = tk.Label(
             status_frame,
-            text="Status: Lasers/switch — not connected | Photodetectors — not connected",
+            text="Status: Switch — not connected | Photodetectors — not connected",
             fg="red",
             anchor="w",
             justify="left",
@@ -653,11 +719,6 @@ class LaserSweepApp:
         self.btn_output = tk.Button(manual_frame, text="Laser OFF", width=10, bg="#888888", fg="white",
                                     font=("Arial", 9, "bold"), command=self.toggle_output, state="disabled")
         self.btn_output.pack(side="left", padx=10)
-
-        tk.Label(manual_frame, text="Active Laser:").pack(side="left", padx=(10, 2))
-        self.lbl_active_laser = tk.Label(manual_frame, text="none", font=("Arial", 9, "bold"), anchor="w")
-        self.lbl_active_laser.pack(side="left", padx=2)
-        self.root.after(250, self._poll_active_laser)
 
         # Enter/Return in either box presses its Set button (does nothing until lasers are connected)
         for entry, button in ((self.ent_manual_wav, self.btn_set_manual),
@@ -889,9 +950,9 @@ class LaserSweepApp:
     def _refresh_connection_status(self):
         """Update status label from ctrl.is_connected and detector_ctrl."""
         if self.ctrl.is_connected:
-            laser_part = f"Lasers/switch — OK ({len(self.ctrl.lasers)} lasers)"
+            laser_part = f"Switch — OK ({len(self.ctrl.lasers)}/{len(LASER_CONFIG)} lasers)"
         else:
-            laser_part = "Lasers/switch — not connected"
+            laser_part = "Switch — not connected"
         if self.detector_ctrl:
             pd_part = f"Photodetectors — OK ({DEFAULT_DAQ_DEVICE})"
         else:
@@ -1354,12 +1415,13 @@ class LaserSweepApp:
             self.btn_start.config(state="normal")
 
             laser_options = ["Auto"]
-            for i, laser in enumerate(self.ctrl.lasers):
-                laser_options.append(f"Laser {i+1} ({laser['min']:.1f}-{laser['max']:.1f} nm)")
+            for laser in self.ctrl.lasers:
+                laser_options.append(f"{laser['name']} ({laser['min']:.1f}-{laser['max']:.1f} nm)")
             self.combo_cont_laser["values"] = laser_options
             saved_laser = getattr(self, "_saved_cont_laser", self.combo_cont_laser.get())
             self.combo_cont_laser.set(saved_laser if saved_laser in laser_options else "Auto")
-            self.combo_cont_laser.set("Auto")
+            for laser in self.ctrl.lasers:
+                self.log(f"{laser['name']} at {laser['ip']}: {laser['min']:.1f}-{laser['max']:.1f} nm")
 
             self._refresh_connection_status()
             self.log(f"{laser_msg}")
@@ -1388,22 +1450,24 @@ class LaserSweepApp:
                 "Wavelength sweeps can still run if lasers are connected; detector logging will be skipped.",
             )
 
-    def _active_laser_text(self):
-        laser = self.ctrl.active_laser
-        if not laser:
-            return "none"
-        for i, l in enumerate(self.ctrl.lasers):
-            if l is laser:
-                return f"Laser {i+1} ({laser['min']:.0f}-{laser['max']:.0f} nm)"
-        return f"switch ch {laser['port']}"
-
-    def _poll_active_laser(self):
-        """Keep the Active Laser field in step with whichever laser the switch is routed to."""
+    def _poll_laser_list(self):
+        """Keep the laser list colors in step with connection, switch routing and output state."""
         try:
-            text = self._active_laser_text()
-            if self.lbl_active_laser["text"] != text:
-                self.lbl_active_laser.config(text=text)
-            self.root.after(250, self._poll_active_laser)
+            for cfg in LASER_CONFIG:
+                laser = self.ctrl.laser_by_name(cfg['name'])
+                if laser is None:
+                    text = f"{cfg['name']} (not connected)" if not self.ctrl.is_connected else f"{cfg['name']} (not found)"
+                    fg = LASER_COLOR_ABSENT
+                else:
+                    text = f"{cfg['name']} ({laser['min']:.1f}-{laser['max']:.1f} nm)"
+                    if laser is self.ctrl.active_laser:
+                        fg = LASER_COLOR_LASING if laser.get('lasing') else LASER_COLOR_SELECTED
+                    else:
+                        fg = LASER_COLOR_PRESENT
+                lbl = self.laser_list_labels[cfg['name']]
+                if lbl["text"] != text or lbl["fg"] != fg:
+                    lbl.config(text=text, fg=fg)
+            self.root.after(250, self._poll_laser_list)
         except tk.TclError:
             pass  # window closed
 
@@ -1576,11 +1640,10 @@ class LaserSweepApp:
                 if not laser:
                     raise ValueError(f"Range {start}-{end} nm is not within any single laser's range.")
             else:
-                # Extract laser index from selection (e.g., "Laser 1 (...)" -> index 0)
-                laser_idx = int(laser_selection.split()[1]) - 1
-                if laser_idx < 0 or laser_idx >= len(self.ctrl.lasers):
+                # Selection looks like "TSL-2 (1350.0-1630.0 nm)"
+                laser = self.ctrl.laser_by_name(laser_selection.split()[0])
+                if laser is None:
                     raise ValueError("Invalid laser selection.")
-                laser = self.ctrl.lasers[laser_idx]
                 if not (laser['min'] <= start <= laser['max'] and laser['min'] <= end <= laser['max']):
                     raise ValueError(f"Range {start}-{end} nm is not within selected laser's range ({laser['min']:.1f}-{laser['max']:.1f} nm).")
             
@@ -1619,7 +1682,7 @@ class LaserSweepApp:
         p = self.cont_sweep_params
         mark_santec_daq_busy()
         self.log(f"--- Starting Continuous Sweep ---")
-        self.log(f"Laser: {p['laser']['ip']} ({p['laser']['min']:.1f}-{p['laser']['max']:.1f} nm)")
+        self.log(f"Laser: {p['laser']['name']} at {p['laser']['ip']} ({p['laser']['min']:.1f}-{p['laser']['max']:.1f} nm)")
         self.log(f"Range: {p['start']:.3f} - {p['end']:.3f} nm")
         self.log(f"Speed: {p['speed']} nm/s, Mode: {'One-way' if p['mode'] == 1 else 'Two-way'}")
         self.log(f"Number of scans: {p['scans']}")
