@@ -58,6 +58,7 @@ PYNQ_PYTHON = "/usr/local/share/pynq-venv/bin/python"
 DEFAULT_HOST = "192.168.3.1"
 DEFAULT_PORT = 8888
 DEFAULT_NAME = "myqick"
+DEFAULT_BOARD = "RFSoC4x2"
 DEFAULT_BITFILE = "/home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/qick_4x2.bit"
 
 # Kernel TCP keepalive: first probe after 60 s idle, then every 10 s, give up
@@ -234,6 +235,10 @@ def unit_text(args, script_path):
         # BOARD, XILINX_XRT etc. live here on PYNQ images; logins and Jupyter
         # get them through PAM, but systemd services don't.
         "EnvironmentFile=-/etc/environment\n"
+        # qick needs BOARD to import QickSoc. Set it explicitly: on some PYNQ
+        # images it is neither in /etc/environment nor in profile.d.
+        f"Environment=BOARD={args.board}\n"
+        "Environment=XILINX_XRT=/usr\n"
         f"WorkingDirectory={INSTALL_DIR}\n"
         f"ExecStart=/bin/bash -c {shlex.quote(shell_cmd)}\n"
         "Restart=always\n"
@@ -302,6 +307,8 @@ def parse_args(argv=None):
     p.add_argument("--name", default=DEFAULT_NAME,
                    help="Name the QICK object is registered under (default %(default)s)")
     p.add_argument("--bitfile", default=DEFAULT_BITFILE, help="QICK firmware .bit file")
+    p.add_argument("--board", default=DEFAULT_BOARD,
+                   help="PYNQ board name for the BOARD variable (default %(default)s)")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--install", action="store_true",
                    help="Install and start as a systemd service (needs sudo)")
