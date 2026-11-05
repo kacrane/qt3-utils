@@ -132,7 +132,17 @@ def start_name_server(Pyro4, host, port):
 
 
 def start_qick_daemon(Pyro4, host, port, server_name, bitfile):
-    from qick import QickSoc, QickConfig
+    logger.info("Environment: BOARD=%s XILINX_XRT=%s",
+                os.environ.get("BOARD"), os.environ.get("XILINX_XRT"))
+    from qick import QickConfig
+    try:
+        # Import from the submodule so a failure shows the real reason;
+        # `from qick import QickSoc` hides it behind a generic ImportError.
+        from qick.qick import QickSoc
+    except Exception:
+        logger.exception("Cannot import QickSoc. PYNQ needs BOARD and XILINX_XRT, which "
+                         "normally come from /etc/environment and /etc/profile.d.")
+        raise
 
     ns = Pyro4.locateNS(host=host, port=port)
     daemon = Pyro4.Daemon(host=host)
@@ -206,8 +216,7 @@ def unit_text(args, script_path):
     # The PYNQ venv and XRT environment are normally set up by login shells;
     # a systemd service has to source them itself.
     shell_cmd = (
-        "for f in /etc/profile.d/pynq_venv.sh /etc/profile.d/xrt_setup.sh; "
-        "do [ -f \"$f\" ] && . \"$f\"; done; "
+        "for f in /etc/profile.d/*.sh; do . \"$f\" || true; done; "
         f"exec {PYNQ_PYTHON} -u {run_args}"
     )
     # systemd expands $VAR and %x itself; escape them so bash sees them.
@@ -222,6 +231,9 @@ def unit_text(args, script_path):
         "[Service]\n"
         "Type=simple\n"
         "User=root\n"
+        # BOARD, XILINX_XRT etc. live here on PYNQ images; logins and Jupyter
+        # get them through PAM, but systemd services don't.
+        "EnvironmentFile=-/etc/environment\n"
         f"WorkingDirectory={INSTALL_DIR}\n"
         f"ExecStart=/bin/bash -c {shlex.quote(shell_cmd)}\n"
         "Restart=always\n"
