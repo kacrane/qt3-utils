@@ -293,8 +293,11 @@ class MicroscopeWindow:
         self._attach_scan_tabs(hw)
 
     def _attach_scan_tabs(self, hw):
-        """Image scan and Line scan tabs (formerly qdlscan): need the stage piezos and the scope counter."""
-        wanted = [n for n in ("Image scan", "Line scan") if n in self.tab_pages]
+        """Image scan and XYZ Optimization tabs (formerly qdlscan's image and line
+        scans): need the stage piezos and the scope counter. "Line scan" is
+        still accepted as the old name of XYZ Optimization in a profile."""
+        line_name = "XYZ Optimization" if "XYZ Optimization" in self.tab_pages else "Line scan"
+        wanted = [n for n in ("Image scan", line_name) if n in self.tab_pages]
         if not wanted or "scan" not in hw:
             return
         stage = getattr(self, "stage_panel", None)
@@ -309,7 +312,7 @@ class MicroscopeWindow:
             for name in wanted:
                 self._tab_failed(name, e)
             return
-        for name, cls, key in (("Image scan", ImageScanTab, "image"), ("Line scan", LineScanTab, "line")):
+        for name, cls, key in (("Image scan", ImageScanTab, "image"), (line_name, LineScanTab, "line")):
             if name not in self.tab_pages:
                 continue
             try:
@@ -320,6 +323,8 @@ class MicroscopeWindow:
             except Exception as e:
                 logger.exception("%s tab failed to start", name)
                 self._tab_failed(name, e)
+        if hasattr(self, "image_tab") and line_name in self.tab_pages:
+            self.image_tab.on_optimize = lambda: self.tabs.select(self.tab_pages[line_name])
 
     def _tab_failed(self, name, err):
         page = self.tab_pages[name]

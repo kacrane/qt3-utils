@@ -210,6 +210,7 @@ class _PlotTab:
         right.pack(side="left", fill="both", expand=True)
         top = ttk.Frame(right, padding=(4, 6))
         top.pack(fill="x")
+        self.top = top
         ttk.Label(top, text="Scan").pack(side="left")
         self.pick = ttk.Combobox(top, state="readonly", width=48)
         self.pick.pack(side="left", padx=6)
@@ -219,7 +220,8 @@ class _PlotTab:
         self.msg_var = tk.StringVar(value="")
         ttk.Label(right, textvariable=self.msg_var, foreground=GRAY).pack(side="bottom", anchor="w", padx=6)
         self.plot = ttk.Frame(right)
-        self.plot.pack(fill="both", expand=True)
+        self.plot.pack(side="left", fill="both", expand=True)
+        self.plot_row = right
         self.fig = None
         try:
             from matplotlib.figure import Figure
@@ -295,8 +297,8 @@ class _PlotTab:
         finally:
             self.rclick.grab_release()
 
-    def _ask_save_path(self, prefix):
-        scan = self.shown
+    def _ask_save_path(self, prefix, scan=None):
+        scan = scan or self.shown
         default = f'{prefix}{scan["id"]}_{scan["timestamp"].strftime("%Y%m%d_%H%M%S")}'
         afile = filedialog.asksaveasfilename(
             filetypes=[("Image with dataset", "*.png"), ("Dataset", "*.hdf5")],
@@ -313,6 +315,26 @@ class ImageScanTab(_PlotTab):
     def __init__(self, parent, engine, cfg, scale=1.0):
         super().__init__(parent, engine, scale)
         self.cfg = cfg or {}
+        self.pick.configure(width=40)
+        # Right-hand image: a scan you pin stays there (e.g. the 80 µm overview
+        # while you take zoom-ins) until you unpin it or pin another. Its
+        # controls are on a second row under the first.
+        self.pinned = None
+        self.pin_btn = ttk.Button(self.top, text="Pin →", command=self.pin)
+        self.pin_btn.pack(side="left", padx=(0, 4))
+        row2 = ttk.Frame(self.top.master, padding=(4, 0, 4, 4))
+        row2.pack(fill="x", after=self.top)
+        ttk.Label(row2, text="Pinned").pack(side="left")
+        self.pin_pick = ttk.Combobox(row2, state="readonly", width=40)
+        self.pin_pick.pack(side="left", padx=6)
+        self.pin_pick.bind("<<ComboboxSelected>>", lambda e: self.pin(self.scans[self.pin_pick.current()]))
+        self.save_pin_btn = ttk.Button(row2, text="Save pinned", command=lambda: self.save(self.pinned))
+        self.save_pin_btn.pack(side="left", padx=4)
+        self.unpin_btn = ttk.Button(row2, text="Unpin", command=self.unpin)
+        self.unpin_btn.pack(side="left")
+        self._build_gallery()
+        # Δz (µm) at which the outline of the left scan on the pinned scan is faintest.
+        self.box_z_full = float(self.cfg.get("box_z_full", 5.0))
         self.running = None  # the scan being taken, while rows are being read
         self._pause = False
         self.norm = (None, None)
@@ -336,14 +358,37 @@ class ImageScanTab(_PlotTab):
         nb.grid(row=r + 8, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Button(nb, text="Normalize", command=self.set_norm).pack(side="left")
         ttk.Button(nb, text="Auto", command=self.auto_norm).pack(side="left", padx=4)
-        self.status = tk.StringVar(value="Scans are centred on the current X/Y position.")
-        ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
+        self.pos_var = tk.StringVar(value="")
+        ttk.Label(self.left, textvariable=self.pos_var, justify="left",
                   wraplength=int(230 * scale)).grid(row=r + 9, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        # Set by the window: switches to the XYZ Optimization tab.
+        self.on_optimize = None
+        self.optimize_btn = ttk.Button(self.left, text="Optimize Position",
+                                       command=lambda: self.on_optimize and self.on_optimize())
+        self.optimize_btn.grid(row=r + 10, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self.status = tk.StringVar(value="")
+        ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
+                  wraplength=int(230 * scale)).grid(row=r + 11, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self._show_position()
         self.range_e.bind("<KeyRelease>", lambda e: self.redraw() if self.shown is None else None)
         self._buttons()
         self.redraw()
         if self.fig is not None:  # margins are in pixels: recompute when the tab resizes
             self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
+
+    def _show_position(self):
+        """Keep "centered on the current X/Y position" up to date (the stage, scans
+        and XYZ Optimization all move the piezos)."""
+        if self.engine.closing:
+            return
+        x, y = self.engine.position("x"), self.engine.position("y")
+        fmt = lambda v: "—" if v is None else f"{v:.2f}"
+        self.pos_var.set(f"Scans are centered on the current X/Y position: ({fmt(x)}, {fmt(y)}) µm")
+        if (x, y) != getattr(self, "_last_xy", None):
+            self._last_xy = (x, y)
+            if self.running is None:  # move the empty frame / position marker
+                self.redraw()
+        self.frame.after(500, self._show_position)
 
     def _buttons(self):
         scan = self.shown
@@ -353,6 +398,152 @@ class ImageScanTab(_PlotTab):
         self.pause_btn.configure(state="normal" if running else "disabled")
         self.cont_btn.configure(state="normal" if (not running and unfinished) else "disabled")
         self.save_btn.configure(state="normal" if (scan is not None and not running) else "disabled")
+        self.pin_btn.configure(state="normal" if scan is not None else "disabled")
+        pinned_busy = self.pinned is None or self.pinned is self.running
+        self.save_pin_btn.configure(state="disabled" if pinned_busy else "normal")
+        self.unpin_btn.configure(state="disabled" if self.pinned is None else "normal")
+        if hasattr(self, "thumbs"):
+            self._gallery_marks()
+
+    # -- gallery -----------------------------------------------------------
+    def _build_gallery(self):
+        """Scrollable column of thumbnails of every kept scan, newest at the top.
+        Click a thumbnail to show it on the left; Pin sends it to the right;
+        × discards it (it is gone from the lists too, so save it first)."""
+        self.thumb_px = int(110 * self.scale)
+        outer = ttk.Frame(self.plot_row)
+        outer.pack(side="right", fill="y", before=self.plot)
+        ttk.Label(outer, text="Scans", foreground=GRAY).pack(anchor="w", padx=4)
+        self.gal_canvas = tk.Canvas(outer, width=self.thumb_px + int(16 * self.scale), highlightthickness=0)
+        bar = ttk.Scrollbar(outer, orient="vertical", command=self.gal_canvas.yview)
+        self.gal_canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        self.gal_canvas.pack(side="left", fill="y", expand=True)
+        self.gal_inner = ttk.Frame(self.gal_canvas)
+        self.gal_canvas.create_window((0, 0), window=self.gal_inner, anchor="nw")
+        self.gal_inner.bind("<Configure>", lambda e: self.gal_canvas.configure(
+            scrollregion=self.gal_canvas.bbox("all")))
+        for w in (self.gal_canvas, self.gal_inner):
+            w.bind("<Enter>", lambda e: self._wheel(True))
+            w.bind("<Leave>", lambda e: self._wheel(False))
+        self.thumbs = {}  # scan id -> {"frame", "img", "photo", "pin", "x"}
+
+    def _wheel(self, on):
+        top = self.gal_canvas.winfo_toplevel()
+        if on:
+            top.bind_all("<MouseWheel>", lambda e: self.gal_canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+            top.bind_all("<Button-4>", lambda e: self.gal_canvas.yview_scroll(-1, "units"))
+            top.bind_all("<Button-5>", lambda e: self.gal_canvas.yview_scroll(1, "units"))
+        else:
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                top.unbind_all(seq)
+
+    def _thumb_photo(self, scan):
+        from PIL import Image, ImageTk
+        z = np.array(scan["data_z"], dtype=float)
+        lo, hi = self.norm if self.norm[0] is not None else (np.nanmin(z) if np.any(np.isfinite(z)) else 0.0,
+                                                              np.nanmax(z) if np.any(np.isfinite(z)) else 1.0)
+        g = np.clip((z - lo) / ((hi - lo) or 1.0), 0, 1) * 255
+        g = np.where(np.isfinite(z), g, 230)  # rows not scanned yet: light grey
+        im = Image.fromarray(np.flipud(g).astype(np.uint8), "L").resize((self.thumb_px, self.thumb_px), Image.NEAREST)
+        return ImageTk.PhotoImage(im)
+
+    def _gallery_add(self, scan):
+        f = tk.Frame(self.gal_inner, bd=0, highlightthickness=3, highlightbackground="#d0d0d0")
+        f.pack(side="top", before=self._first_thumb(), padx=2, pady=3)
+        z = scan["start_position_vector"][2]
+        ttk.Label(f, text=f"{scan['id']} · {scan['range']:g} µm · z {z:.2f}",
+                  font=("TkDefaultFont", 8)).pack(anchor="w")
+        img = tk.Label(f, cursor="hand2", bd=0)
+        img.pack()
+        row = ttk.Frame(f)
+        row.pack(fill="x")
+        pin = ttk.Button(row, text="Pin", width=4, command=lambda: self.pin(scan))
+        pin.pack(side="left")
+        x = ttk.Button(row, text="×", width=2, command=lambda: self.discard(scan))
+        x.pack(side="right")
+        img.bind("<Button-1>", lambda e: self._pick_scan(scan))
+        self.thumbs[scan["id"]] = {"frame": f, "img": img, "pin": pin, "x": x}
+        self._gallery_update(scan)
+        self.gal_canvas.yview_moveto(0)
+
+    def _first_thumb(self):
+        kids = self.gal_inner.pack_slaves()
+        return kids[0] if kids else None
+
+    def _gallery_update(self, scan):
+        t = self.thumbs.get(scan["id"])
+        if t is None:
+            return
+        try:
+            t["photo"] = self._thumb_photo(scan)
+            t["img"].configure(image=t["photo"])
+        except Exception as e:  # Pillow missing: keep the text label only
+            logger.info("no thumbnail: %s", e)
+
+    def _gallery_marks(self):
+        """Blue border: shown on the left. Orange: pinned."""
+        for sc in self.scans:
+            t = self.thumbs.get(sc["id"])
+            if t is None:
+                continue
+            colour = "#1864ab" if sc is self.shown else ("#ff9f1c" if sc is self.pinned else "#d0d0d0")
+            t["frame"].configure(highlightbackground=colour, highlightcolor=colour)
+            t["x"].configure(state="disabled" if sc is self.running else "normal")
+
+    def _pick_scan(self, scan):
+        self._show(scan)
+        self.pick.current(self.scans.index(scan))
+
+    def discard(self, scan):
+        if scan is self.running:
+            return
+        t = self.thumbs.pop(scan["id"], None)
+        if t is not None:
+            t["frame"].destroy()
+        self.scans.remove(scan)
+        if self.pinned is scan:
+            self.pinned = None
+        if self.shown is scan:
+            self.shown = self.scans[-1] if self.scans else None
+        self.pick.configure(values=[s["title"] for s in self.scans])
+        if self.shown is None:
+            self.pick.set("")
+        else:
+            self.pick.current(self.scans.index(self.shown))
+        self._pin_list()
+        self._buttons()
+        self.redraw()
+        self.status.set(f"Discarded image {scan['id']}.")
+
+    # -- pinned scan --------------------------------------------------------
+    def _add_scan(self, scan):
+        super()._add_scan(scan)
+        self._pin_list()
+        self._gallery_add(scan)
+        self._gallery_marks()
+
+    def _pin_list(self):
+        self.pin_pick.configure(values=[s["title"] for s in self.scans])
+        if self.pinned is None:
+            self.pin_pick.set("")
+        else:
+            self.pin_pick.current(self.scans.index(self.pinned))
+
+    def pin(self, scan=None):
+        scan = scan or self.shown
+        if scan is None:
+            return
+        self.pinned = scan
+        self._pin_list()
+        self._buttons()
+        self.redraw()
+
+    def unpin(self):
+        self.pinned = None
+        self._pin_list()
+        self._buttons()
+        self.redraw()
 
     def _show(self, scan):
         super()._show(scan)
@@ -457,8 +648,9 @@ class ImageScanTab(_PlotTab):
         if ok:
             scan["data_z"][i] = result
             scan["index"] = i + 1
-            if self.shown is scan:
+            if self.shown is scan or self.pinned is scan:
                 self.redraw()
+            self._gallery_update(scan)
             self.status.set(f"Image {scan['id']}: row {i + 1} of {scan['n_pixels']}")
         self._row_or_fail(ok, result)
 
@@ -492,69 +684,109 @@ class ImageScanTab(_PlotTab):
             return
         self.norm = (lo, hi)
         self.redraw()
+        for sc in self.scans:
+            self._gallery_update(sc)
 
     def auto_norm(self):
         self.norm = (None, None)
         self.redraw()
+        for sc in self.scans:
+            self._gallery_update(sc)
 
     def redraw(self):
+        """Two square images side by side: the newest (or chosen) scan on the
+        left, the pinned scan on the right. The left scan's area is outlined
+        on the pinned one: solid when both were taken at the same Z, fading
+        the farther apart their Z is (faintest at box_z_full µm or more)."""
         if self.fig is None:
             return
         self.fig.clear()
-        ax = self.fig.add_subplot(111)
+        pt = self.fig.dpi / 72.0
+        w = self.fig.get_figwidth() * self.fig.dpi
+        h = self.fig.get_figheight() * self.fig.dpi
+        left, bottom, top, gap = 48 * pt, 36 * pt, 28 * pt, 16 * pt
+        pad, bar, bar_labels = 6 * pt, 9 * pt, 34 * pt
+        extra = left + pad + bar + bar_labels
+        side = max(10.0, min(h - bottom - top, (w - gap - 2 * extra) / 2))
+        bottom = h - top - side  # images at the top of the area, not the bottom
+        frame = self._empty_extent()
+        self._pane(0.0, side, self.shown, frame, "newest" if self.shown is self._newest() else "selected",
+                   "Start a scan", w, h, left, bottom, pad, bar)
+        ax2 = self._pane(extra + side + gap, side, self.pinned, frame, "pinned",
+                         "Pin a scan to keep it here", w, h, left, bottom, pad, bar)
+        if self.pinned is not None and self.shown is not None and self.shown is not self.pinned:
+            self._outline(ax2, self.shown, self.pinned)
+        self.canvas.draw_idle()
+
+    def _newest(self):
+        return self.scans[-1] if self.scans else None
+
+    def _empty_extent(self):
+        """Square the size of the scan Start would take now."""
+        try:
+            rng = float(self.range_e.get())
+        except (AttributeError, ValueError):
+            rng = float(self.cfg.get("range", 80))
+        cx = centred_range(self.engine.position("x") or 0.0, rng, *self.engine.limits("x"))
+        cy = centred_range(self.engine.position("y") or 0.0, rng, *self.engine.limits("y"))
+        return [cx[0], cx[1], cy[0], cy[1]]
+
+    @staticmethod
+    def _extent(scan):
+        pw = scan["range"] / scan["n_pixels"]
+        return [scan["min_position_1"] - pw / 2, scan["max_position_1"] + pw / 2,
+                scan["min_position_2"] - pw / 2, scan["max_position_2"] + pw / 2]
+
+    def _pane(self, x0, side, scan, frame, title, empty_text, w, h, left, bottom, pad, bar):
+        from matplotlib.ticker import MaxNLocator
+        ax = self.fig.add_axes([(x0 + left) / w, bottom / h, side / w, side / h])
         ax.tick_params(labelsize=FONT)
-        scan = self.shown
+        ax.xaxis.set_major_locator(MaxNLocator(4))
+        ax.yaxis.set_major_locator(MaxNLocator(4))
+        ax.grid(alpha=0.3)
+        ax.set_facecolor("#e6e6e6" if scan is not None else "white")  # grey = rows not scanned yet
         if scan is None:
-            # Empty square frame the size of the scan Start would take now.
-            try:
-                rng = float(self.range_e.get())
-            except (AttributeError, ValueError):
-                rng = float(self.cfg.get("range", 80))
-            cx = centred_range(self.engine.position("x") or 0.0, rng, *self.engine.limits("x"))
-            cy = centred_range(self.engine.position("y") or 0.0, rng, *self.engine.limits("y"))
-            ax.set_xlim(cx[0], cx[1])
-            ax.set_ylim(cy[0], cy[1])
+            ax.set_xlim(frame[0], frame[1])
+            ax.set_ylim(frame[2], frame[3])
             ax.set_aspect("equal")
-            ax.grid(alpha=0.3)
             ax.set_xlabel("x position (µm)", fontsize=FONT)
             ax.set_ylabel("y position (µm)", fontsize=FONT)
-            ax.text(0.5, 0.5, "Start a scan", ha="center", va="center", transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
-            self._image_at_left(ax).set_visible(False)  # keeps the same place as a real scan
-            self.canvas.draw_idle()
-            return
-        pw = scan["range"] / scan["n_pixels"]
-        extent = [scan["min_position_1"] - pw / 2, scan["max_position_1"] + pw / 2,
-                  scan["min_position_2"] - pw / 2, scan["max_position_2"] + pw / 2]
-        img = ax.imshow(scan["data_z"], extent=extent, cmap=DEFAULT_COLOR_MAP, origin="lower",
+            ax.text(0.5, 0.5, empty_text, ha="center", va="center", transform=ax.transAxes,
+                    color="#888888", fontsize=FONT + 1)
+            return ax
+        img = ax.imshow(scan["data_z"], extent=self._extent(scan), cmap=DEFAULT_COLOR_MAP, origin="lower",
                         aspect="equal", interpolation="none")
         if self.norm[0] is not None:
             from matplotlib.colors import Normalize
             img.set_norm(Normalize(vmin=self.norm[0], vmax=self.norm[1]))
-        cbar = self.fig.colorbar(img, cax=self._image_at_left(ax))
-        cbar.ax.set_ylabel("Intensity (cts/s)", rotation=270, labelpad=12, fontsize=FONT)
-        cbar.ax.tick_params(labelsize=FONT)
+        cax = self.fig.add_axes([(x0 + left + side + pad) / w, bottom / h, bar / w, side / h])
+        cbar = self.fig.colorbar(img, cax=cax)
+        cbar.ax.set_title("cts/s", fontsize=FONT - 1, pad=3)
+        cbar.ax.tick_params(labelsize=FONT - 1)
         ax.set_xlabel(f"{scan['axis_1']} position (µm)", fontsize=FONT)
         ax.set_ylabel(f"{scan['axis_2']} position (µm)", fontsize=FONT)
-        ax.grid(alpha=0.3)
+        z = scan["start_position_vector"][2]
+        ax.set_title(f"{title} {scan['id']} · z {z:.2f} µm", fontsize=FONT, pad=14)
+        if scan is self.running and scan["index"] < scan["n_pixels"]:
+            ax.axhline(scan["data_y"][scan["index"]], color="#1f8f2f", linewidth=1)
         x, y = self.engine.position("x"), self.engine.position("y")
         if x is not None and y is not None:
             ax.plot(x, y, "o", fillstyle="none", markeredgecolor="#1864ab", markeredgewidth=2)
-        self.canvas.draw_idle()
+        ax.set_xlim(*self._extent(scan)[:2])
+        ax.set_ylim(*self._extent(scan)[2:])
+        return ax
 
-    def _image_at_left(self, ax):
-        """Put the square image at the left of the tab with the colour bar
-        right beside it (a centred layout would leave it in the middle). Returns the
-        colour bar's axes. Margins are in points so the labels fit at any
-        size and screen scaling."""
-        pt = self.fig.dpi / 72.0
-        w = self.fig.get_figwidth() * self.fig.dpi
-        h = self.fig.get_figheight() * self.fig.dpi
-        left, bottom, top = 48 * pt, 36 * pt, 10 * pt
-        pad, bar, bar_labels = 8 * pt, 10 * pt, 58 * pt
-        side = max(10.0, min(h - bottom - top, w - left - pad - bar - bar_labels))
-        ax.set_anchor("SW")
-        ax.set_position([left / w, bottom / h, side / w, side / h])
-        return self.fig.add_axes([(left + side + pad) / w, bottom / h, bar / w, side / h])
+    def _outline(self, ax, scan, ref):
+        from matplotlib.patches import Rectangle
+        e = self._extent(scan)
+        dz = scan["start_position_vector"][2] - ref["start_position_vector"][2]
+        alpha = 1.0 - 0.85 * min(1.0, abs(dz) / self.box_z_full) if self.box_z_full > 0 else 1.0
+        ax.add_patch(Rectangle((e[0], e[2]), e[1] - e[0], e[3] - e[2], fill=False, edgecolor="#ff9f1c",
+                               linewidth=1.8, alpha=alpha, clip_on=True))
+        lo, hi = ax.get_xlim()
+        right_side = (e[0] + e[1]) / 2 > (lo + hi) / 2  # keep the label inside the image
+        ax.text(e[1] if right_side else e[0], e[3], f"Δz {dz:+.1f}", color="#ff9f1c", alpha=max(alpha, 0.5),
+                fontsize=FONT - 1, va="bottom", ha="right" if right_side else "left", clip_on=True)
 
     def _go_to(self):
         x, y = self._rclick_xy
@@ -565,21 +797,38 @@ class ImageScanTab(_PlotTab):
                          lambda ok, res: (self.status.set(f"Moved to x {x:.2f}, y {y:.2f} µm" if ok else f"Move failed: {res}"),
                                           self.redraw()))
 
-    def save(self):
-        if self.shown is None or self.running is not None:
+    def save(self, scan=None):
+        scan = scan or self.shown
+        if scan is None or scan is self.running:
             return
-        path = self._ask_save_path("scan")
+        path = self._ask_save_path("scan", scan)
         if path is None:
             return
         folder, stem, ext = path
         try:
-            if ext == ".png" and self.fig is not None:
-                self.fig.savefig(os.path.join(folder, stem + ".png"), dpi=300)
-            self._save_hdf5(os.path.join(folder, stem + ".hdf5"), stem, self.shown)
+            if ext == ".png":
+                self._save_png(os.path.join(folder, stem + ".png"), scan)
+            self._save_hdf5(os.path.join(folder, stem + ".hdf5"), stem, scan)
             self.msg_var.set(f"Saved {stem} in {folder}")
         except Exception as e:
             logger.exception("save failed")
             self.msg_var.set(f"Save failed: {e}")
+
+    def _save_png(self, path, scan):
+        """The one scan on its own (not both panes), like qdlscan's saved image."""
+        from matplotlib.figure import Figure
+        fig = Figure(figsize=(5.5, 4.5))
+        ax = fig.add_subplot(111)
+        img = ax.imshow(scan["data_z"], extent=self._extent(scan), cmap=DEFAULT_COLOR_MAP, origin="lower",
+                        aspect="equal", interpolation="none")
+        if self.norm[0] is not None:
+            from matplotlib.colors import Normalize
+            img.set_norm(Normalize(vmin=self.norm[0], vmax=self.norm[1]))
+        fig.colorbar(img, ax=ax).ax.set_ylabel("Intensity (cts/s)", rotation=270, labelpad=15)
+        ax.set_xlabel(f"{scan['axis_1']} position (µm)")
+        ax.set_ylabel(f"{scan['axis_2']} position (µm)")
+        fig.tight_layout()
+        fig.savefig(path, dpi=300)
 
     def _save_hdf5(self, path, stem, s):
         import h5py

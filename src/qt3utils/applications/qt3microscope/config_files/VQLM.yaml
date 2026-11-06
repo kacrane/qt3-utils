@@ -17,7 +17,7 @@ QT3MICROSCOPE:
 
   # Measurement tabs in the middle.
   # No PLE tab on the VQLM (Kendall, 2026-11-06).
-  measurements: ["Image scan", "Line scan"]
+  measurements: ["Image scan", "XYZ Optimization"]
 
   # Strip along the bottom. VQLM micrometers are manual, so no XY box.
   bottom:

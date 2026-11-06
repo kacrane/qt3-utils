@@ -15,7 +15,7 @@ QT3MICROSCOPE:
     - {key: flippers, label: "Flippers"}
     - {key: daq, label: "DAQ"}
 
-  measurements: ["Image scan", "Line scan", "Santec sweep"]
+  measurements: ["Image scan", "XYZ Optimization", "Santec sweep"]
 
   # The XY micrometers (MCL MicroDrive) stay on screen next to the scope.
   bottom:
