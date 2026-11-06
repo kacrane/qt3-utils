@@ -1,13 +1,13 @@
 """
-qdllaser: turn the VQLM laser on and off through the QICK-DAWG board.
+qt3laser: turn the VQLM laser on and off through the QICK-DAWG board.
 
 The laser gate is a PMOD pin on the QICK-DAWG. This app connects with
 QickDawgClient, which reconnects by itself if the board reboots or the link
 drops, and checks the board every 30 s so the status light stays honest.
 
-Run:  python -m qdlutils.applications.qdllaser.main
-      python -m qdlutils.applications.qdllaser.main --host 192.168.3.1
-Settings: config_files/qdllaser_base.yaml (or --config my.yaml)
+Run:  python -m qdlutils.applications.qt3laser.main
+      python -m qdlutils.applications.qt3laser.main --host 192.168.3.1
+Settings: config_files/qt3laser_base.yaml (or --config my.yaml)
 """
 
 import argparse
@@ -28,20 +28,20 @@ logger = logging.getLogger(__name__)
 logging.basicConfig()
 
 # Keep a log file so a failure seen hours later can still be diagnosed.
-LOG_PATH = os.path.join(os.path.expanduser("~"), ".qdlutils", "qdllaser.log")
+LOG_PATH = os.path.join(os.path.expanduser("~"), ".qdlutils", "qt3laser.log")
 try:
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     _fh = logging.FileHandler(LOG_PATH)
     _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     _fh.setLevel(logging.INFO)
-    for _name in ("qdlutils.applications.qdllaser", "qdlutils.hardware.qickdawg"):
+    for _name in ("qdlutils.applications.qt3laser", "qdlutils.hardware.qickdawg"):
         logging.getLogger(_name).addHandler(_fh)
         logging.getLogger(_name).setLevel(logging.INFO)
 except OSError:
     pass
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_files")
-DEFAULT_CONFIG = os.path.join(CONFIG_DIR, "qdllaser_base.yaml")
+DEFAULT_CONFIG = os.path.join(CONFIG_DIR, "qt3laser_base.yaml")
 
 GREEN = "#2e9d3a"
 RED = "#c62828"
@@ -51,7 +51,7 @@ ORANGE = "#e08a00"
 
 def load_config(path=None):
     with open(path or DEFAULT_CONFIG, "r") as f:
-        cfg = yaml.safe_load(f)["QDLLASER"]
+        cfg = yaml.safe_load(f)["QT3LASER"]
     return cfg.get("QickDawg", {}), cfg.get("Laser", {})
 
 
@@ -65,7 +65,7 @@ class LaserApp:
         self._busy = False
         self._closing = False
 
-        window.title("qdllaser")
+        window.title("qt3laser")
         window.resizable(False, False)
         self._build()
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -173,7 +173,7 @@ class LaserApp:
                 result = fn()
                 self._results.put((name, True, result, was_connected, quiet))
             except Exception as e:
-                logger.warning("qdllaser %s failed: %r", name, e, exc_info=not quiet)
+                logger.warning("qt3laser %s failed: %r", name, e, exc_info=not quiet)
                 self._results.put((name, False, e, was_connected, quiet))
 
     def _poll_results(self):
@@ -239,7 +239,7 @@ class LaserApp:
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Turn the VQLM laser on/off through the QICK-DAWG.")
-    p.add_argument("--config", default=None, help="YAML settings file (default: qdllaser_base.yaml)")
+    p.add_argument("--config", default=None, help="YAML settings file (default: qt3laser_base.yaml)")
     p.add_argument("--host", default=None, help="Board IP (overrides the config file)")
     return p.parse_args(argv)
 

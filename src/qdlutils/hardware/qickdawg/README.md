@@ -32,7 +32,7 @@ Upstream runs the two board pieces from `run_server/name_server.ipynb` and
 |---|---|
 | `board/qick_server.py` | One script that runs the name server and the QICK daemon. `--install` makes it a systemd service, so it starts at boot and restarts within 10 s if it crashes. The thread pool is 200, and TCP keepalive drops dead clients after about 2 min. A watchdog restarts everything if the board stops answering for 90 s. Same port and name as the notebooks, so `qd.start_client(...)` works unchanged. |
 | `client.py` | `QickDawgClient`: connects like `start_client`, reconnects and retries once if a call fails, and has a 10 s timeout instead of hanging. Also a command-line check. |
-| `applications/qdllaser` | Small laser ON/OFF window, also launched from qdlhome. It checks the board every 30 s, reconnects by itself, and shows "unknown" if the board server restarted, because a restart can reset the pin. |
+| `applications/qt3laser` | Small laser ON/OFF window, also launched from qdlhome. It checks the board every 30 s, reconnects by itself, and shows "unknown" if the board server restarted, because a restart can reset the pin. |
 
 ## Bring-up (one time)
 

@@ -1,7 +1,7 @@
-# qdllaser settings: the laser on/off is a PMOD pin on the QICK-DAWG board.
+# qt3laser settings: the laser on/off is a PMOD pin on the QICK-DAWG board.
 # These should match the qickdawg notebook you use (qd.start_client(...) and
 # default_config.* lines).
-QDLLASER:
+QT3LASER:
   QickDawg:
     host: 192.168.3.1     # board IP, the address in qd.start_client('...')
     port: 8888

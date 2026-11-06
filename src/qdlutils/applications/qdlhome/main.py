@@ -7,7 +7,7 @@ import qdlutils.applications.qdlscan.main as qdlscan
 import qdlutils.applications.qdlscope.main as qdlscope
 import qdlutils.applications.qt3mirror.main as qt3mirror
 import qdlutils.applications.qt3power.main as qt3power
-import qdlutils.applications.qdllaser.main as qdllaser
+import qdlutils.applications.qt3laser.main as qt3laser
 
 logger = logging.getLogger(__name__)
 logging.basicConfig()
@@ -56,7 +56,7 @@ class HomeApplication:
         self.view.qdlscope_button.bind('<Button>', self.open_qdlscope)
         self.view.qt3mirror_button.bind('<Button>', self.open_qt3mirror)
         self.view.qt3power_button.bind('<Button>', self.open_qt3power)
-        self.view.qdllaser_button.bind('<Button>', self.open_qdllaser)
+        self.view.qt3laser_button.bind('<Button>', self.open_qt3laser)
 
     def run(self) -> None:
         '''
@@ -116,10 +116,10 @@ class HomeApplication:
         except Exception as e:
             logger.warning(f'{e}')
 
-    def open_qdllaser(self, tkinter_event=None) -> None:
+    def open_qt3laser(self, tkinter_event=None) -> None:
         try:
-            logger.info('Launching qdllaser...')
-            qdllaser.main(is_root_process=False)
+            logger.info('Launching qt3laser...')
+            qt3laser.main(is_root_process=False)
         except Exception as e:
             logger.warning(f'{e}')
 
@@ -160,8 +160,8 @@ class HomeApplicationView:
         self.qt3power_button = tk.Button(app_frame, text='qt3power', width=20)
         self.qt3power_button.grid(row=row, column=0, columnspan=2, pady=5)
         row += 1
-        self.qdllaser_button = tk.Button(app_frame, text='qdllaser', width=20)
-        self.qdllaser_button.grid(row=row, column=0, columnspan=2, pady=5)
+        self.qt3laser_button = tk.Button(app_frame, text='qt3laser', width=20)
+        self.qt3laser_button.grid(row=row, column=0, columnspan=2, pady=5)
 
 def main():
     tkapp = HomeApplication()
