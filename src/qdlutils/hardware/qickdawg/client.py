@@ -160,16 +160,21 @@ class QickDawgClient:
 
     def call(self, fn, *args, **kwargs):
         """
-        Run ``fn(qickdawg_module, *args, **kwargs)``. On a connection error,
-        reconnect once and retry.
+        Run ``fn(qickdawg_module, *args, **kwargs)``. If it fails for any
+        reason, reconnect from scratch once and retry. Only use this for
+        calls that are safe to repeat (laser on/off are).
         """
         with self._lock:
             if not self.connected:
                 self.connect()
             try:
                 return fn(self._qd, *args, **kwargs)
-            except _connection_errors() as e:
-                logger.warning("QICK-DAWG call failed (%r); reconnecting and retrying", e)
+            except Exception as e:
+                # After a board reboot the old proxies can fail in ways that
+                # are not plain connection errors (e.g. a half-started
+                # streamer), so any failure gets one clean reconnect.
+                logger.warning("QICK-DAWG call failed (%r); reconnecting and retrying",
+                               e, exc_info=True)
                 self.last_error = e
                 self.connect()
                 return fn(self._qd, *args, **kwargs)

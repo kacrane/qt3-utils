@@ -27,6 +27,19 @@ from qdlutils.hardware.qickdawg.client import QickDawgClient
 logger = logging.getLogger(__name__)
 logging.basicConfig()
 
+# Keep a log file so a failure seen hours later can still be diagnosed.
+LOG_PATH = os.path.join(os.path.expanduser("~"), ".qdlutils", "qdllaser.log")
+try:
+    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+    _fh = logging.FileHandler(LOG_PATH)
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    _fh.setLevel(logging.INFO)
+    for _name in ("qdlutils.applications.qdllaser", "qdlutils.hardware.qickdawg"):
+        logging.getLogger(_name).addHandler(_fh)
+        logging.getLogger(_name).setLevel(logging.INFO)
+except OSError:
+    pass
+
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config_files")
 DEFAULT_CONFIG = os.path.join(CONFIG_DIR, "qdllaser_base.yaml")
 
@@ -160,7 +173,7 @@ class LaserApp:
                 result = fn()
                 self._results.put((name, True, result, was_connected, quiet))
             except Exception as e:
-                logger.warning("qdllaser %s failed: %r", name, e)
+                logger.warning("qdllaser %s failed: %r", name, e, exc_info=not quiet)
                 self._results.put((name, False, e, was_connected, quiet))
 
     def _poll_results(self):
