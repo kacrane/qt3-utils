@@ -288,6 +288,7 @@ class _PlotTab:
         if event.button != 3 or event.xdata is None:
             return
         self._rclick_xy = (event.xdata, event.ydata)
+        self._rclick_ax = event.inaxes
         x, y = self.frame.winfo_pointerxy()
         try:
             self.rclick.tk_popup(x, y)
@@ -621,12 +622,15 @@ class LineScanTab(_PlotTab):
             b = tk.Button(btns, text=f"Optimize {axis.upper()}", width=10, command=lambda a=axis: self.optimize(a))
             b.pack(side="left", padx=1)
             self.opt_btns.append(b)
+        ttk.Button(self.left, text="Reset plots", command=self.clear_plots).grid(
+            row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self.status = tk.StringVar(value="Scans around the current position, then moves to the fitted peak.")
         ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
-                  wraplength=int(230 * scale)).grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
+                  wraplength=int(230 * scale)).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
         self.redraw()
         if self.fig is not None:  # margins are in points: recompute when the tab resizes
             self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
+            self.canvas.mpl_connect("motion_notify_event", self._on_hover)
 
     def _set_running(self, running):
         for b in self.opt_btns:
@@ -699,43 +703,141 @@ class LineScanTab(_PlotTab):
         self.redraw()
 
     def redraw(self):
+        """Three plots side by side, X | Y | Z. Every line scan of the session is
+        drawn on its axis's plot in turn through the colour cycle; the newest one
+        on each plot is drawn heavier, with a dashed line at the position it moved
+        to. The title shows where the other two piezos were for the newest scan;
+        hovering over a line shows that scan's number and the other two piezos.
+        The position axis widens to cover every scan on that plot, and all
+        three share one intensity scale."""
         if self.fig is None:
             return
         self.fig.clear()
-        ax = self.fig.add_subplot(111)
-        ax.tick_params(labelsize=FONT)
-        self._place_axes(ax)
-        s = self.shown
-        ax.set_ylabel("Intensity (cts/s)", fontsize=FONT)
-        ax.grid(alpha=0.3)
-        if s is None:
-            ax.set_xlabel("position (µm)", fontsize=FONT)
-            ax.text(0.5, 0.5, "Optimize X, Y or Z", ha="center", va="center", transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
-            self.canvas.draw_idle()
-            return
-        if not np.all(np.isnan(s["data_y"])):
-            ax.plot(s["data_x"], s["data_y"], color="k", linewidth=1.5)
-        ax.axvline(s["start_position_axis"], color="#bac8ff", linewidth=1.5)
-        if s["final_position_axis"] is not None:
-            ax.axvline(s["final_position_axis"], color="#1864ab", linewidth=1.5)
-        ax.set_xlim(s["min_position"], s["max_position"])
-        ax.set_xlabel(f"{s['axis']} position (µm)", fontsize=FONT)
+        pt = self.fig.dpi / 72.0
+        w = self.fig.get_figwidth() * self.fig.dpi
+        h = self.fig.get_figheight() * self.fig.dpi
+        left, gap, right, bottom, top = 56 * pt, 14 * pt, 10 * pt, 36 * pt, 18 * pt
+        pw = max(10.0, (w - left - right - 2 * gap) / 3)
+        ph = max(10.0, h - bottom - top)
+        self.axes_by_name = {}
+        self._hover_lines = []  # (axes, Line2D, scan)
+        self._hover_note = None
+        colours = [c["color"] for c in __import__("matplotlib").rcParams["axes.prop_cycle"]]
+        for k, name in enumerate(("x", "y", "z")):
+            ax = self.fig.add_axes([(left + k * (pw + gap)) / w, bottom / h, pw / w, ph / h])
+            self.axes_by_name[name] = ax
+            ax.tick_params(labelsize=FONT)
+            ax.grid(alpha=0.3)
+            ax.set_xlabel(f"{name} position (µm)", fontsize=FONT)
+            if k == 0:
+                ax.set_ylabel("Intensity (cts/s)", fontsize=FONT)
+            else:  # same intensity scale on all three: labels only on the left plot
+                ax.tick_params(labelleft=False)
+            scans = [sc for sc in self.scans if sc["axis"] == name]
+            if not scans:
+                ax.text(0.5, 0.5, f"Optimize {name.upper()}", ha="center", va="center",
+                        transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
+                continue
+            others = [o for o in ("x", "y", "z") if o != name]
+            for n, sc in enumerate(scans):
+                newest = n == len(scans) - 1
+                colour = colours[n % len(colours)]
+                vec = sc["start_position_vector"]
+                label = f"{sc['id']}  " + "  ".join(f"{o} {vec[AXIS_INDEX[o]]:.2f}" for o in others)
+                if np.all(np.isnan(sc["data_y"])):
+                    ax.plot([], [], color=colour, linewidth=2.4 if newest else 1.0, label=label + " …")
+                else:
+                    (line,) = ax.plot(sc["data_x"], sc["data_y"], color=colour, label=label,
+                                      linewidth=2.4 if newest else 1.0, alpha=1.0 if newest else 0.75,
+                                      zorder=3 if newest else 2)
+                    self._hover_lines.append((ax, line, sc))
+                if newest and sc["final_position_axis"] is not None:
+                    ax.axvline(sc["final_position_axis"], color=colour, linewidth=1.2, linestyle="--", zorder=1)
+            ax.set_xlim(min(sc["min_position"] for sc in scans), max(sc["max_position"] for sc in scans))
+            vec = scans[-1]["start_position_vector"]
+            ax.set_title("  ".join(f"{o} {vec[AXIS_INDEX[o]]:.2f}" for o in others) + " µm",
+                         fontsize=FONT, color=colours[(len(scans) - 1) % len(colours)], pad=3)
+        # One intensity scale for X, Y and Z so peak heights can be compared across.
+        data = [sc["data_y"] for sc in self.scans if not np.all(np.isnan(sc["data_y"]))]
+        if data:
+            lo = min(0.0, float(min(np.nanmin(d) for d in data)))
+            hi = float(max(np.nanmax(d) for d in data))
+            hi = hi + 0.05 * (hi - lo) if hi > lo else lo + 1.0
+            for ax in self.axes_by_name.values():
+                ax.set_ylim(lo, hi)
         self.canvas.draw_idle()
+
+    def _on_hover(self, event):
+        """Show scan number and the other two piezo positions for the line under the mouse."""
+        note = getattr(self, "_hover_note", None)
+        best = None
+        if event.inaxes is not None and event.x is not None:
+            for ax, line, sc in getattr(self, "_hover_lines", []):
+                if ax is not event.inaxes:
+                    continue
+                pts = ax.transData.transform(np.column_stack([line.get_xdata(), line.get_ydata()]))
+                d = np.nanmin(np.hypot(pts[:, 0] - event.x, pts[:, 1] - event.y))
+                if d < 8 * self.fig.dpi / 72.0 and (best is None or d < best[0]):
+                    best = (d, ax, sc, line.get_color())
+        if best is None:
+            if note is not None and note.get_visible():
+                note.set_visible(False)
+                self.canvas.draw_idle()
+            return
+        _, ax, sc, colour = best
+        vec = sc["start_position_vector"]
+        others = [o for o in ("x", "y", "z") if o != sc["axis"]]
+        text = (f"scan {sc['id']}  {sc['timestamp'].strftime('%H:%M:%S')}\n"
+                + ", ".join(f"{o} {vec[AXIS_INDEX[o]]:.2f}" for o in others) + " µm")
+        if sc["final_position_axis"] is not None:
+            text += f"\nmoved {sc['axis']} to {sc['final_position_axis']:.3f} µm"
+        if note is None or note.axes is not ax:
+            if note is not None:
+                note.remove()
+            note = ax.annotate("", xy=(0, 0), xytext=(8, 8), textcoords="offset points", fontsize=FONT - 1,
+                               bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#888888", alpha=0.95),
+                               zorder=10, annotation_clip=False)
+            self._hover_note = note
+        note.xy = (event.xdata, event.ydata)
+        note.set_text(text)
+        note.get_bbox_patch().set_edgecolor(colour)
+        # keep the box inside the plot: flip it left of the mouse on the right half
+        right_half = event.x > (ax.bbox.x0 + ax.bbox.x1) / 2
+        top_half = event.y > (ax.bbox.y0 + ax.bbox.y1) / 2
+        note.set_position((-8 if right_half else 8, -8 if top_half else 8))
+        note.set_ha("right" if right_half else "left")
+        note.set_va("top" if top_half else "bottom")
+        note.set_visible(True)
+        for other in self.axes_by_name.values():  # draw the box above the neighbouring plots
+            other.set_zorder(1 if other is ax else 0)
+        self.canvas.draw_idle()
+
+    def clear_plots(self):
+        if self.engine.busy.startswith("Optimizing"):
+            return
+        self.scans = []
+        self.shown = None
+        self.pick.configure(values=[])
+        self.pick.set("")
+        self._set_running(False)
+        self.redraw()
 
     def _go_to(self):
         x = self._rclick_xy[0]
-        s = self.shown
-        if x is None or s is None or self.engine.busy:
-            self.status.set(self.engine.busy or "Right-click inside the plot.")
+        name = next((n for n, a in getattr(self, "axes_by_name", {}).items()
+                     if a is getattr(self, "_rclick_ax", None)), None)
+        if x is None or name is None or self.engine.busy:
+            self.status.set(self.engine.busy or "Right-click inside one of the plots.")
             return
+        scans = [sc for sc in self.scans if sc["axis"] == name]
 
         def done(ok, res):
-            if ok:
-                s["final_position_axis"] = float(x)
-            self.status.set(f"Moved {s['axis'].upper()} to {x:.3f} µm" if ok else f"Move failed: {res}")
+            if ok and scans:
+                scans[-1]["final_position_axis"] = float(x)
+            self.status.set(f"Moved {name.upper()} to {x:.3f} µm" if ok else f"Move failed: {res}")
             self.redraw()
 
-        self.engine.move([(s["axis"], float(x))], done)
+        self.engine.move([(name, float(x))], done)
 
     def save(self):
         if self.shown is None:
