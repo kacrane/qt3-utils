@@ -1,0 +1,31 @@
+# QT3 Microscope setup profile for the TQLM.
+# Lists what the window shows. Hardware settings are added step by step.
+QT3MICROSCOPE:
+  setup: TQLM
+  title: "QT3 Microscope — TQLM"
+  geometry: 1440x900
+  drawer_width: 390
+
+  status:
+    - {key: santec, label: "Santec"}
+    - {key: superk, label: "SuperK"}
+    - {key: power, label: "P obj"}
+    - {key: counts, label: "SNSPD"}
+    - {key: piezo, label: "Piezo"}
+    - {key: flippers, label: "Flippers"}
+    - {key: daq, label: "DAQ"}
+
+  measurements: ["Image scan", "Line scan", "Santec sweep"]
+
+  # The XY micrometers (MCL MicroDrive) stay on screen next to the scope.
+  bottom:
+    scope_label: "Scope — SNSPD"
+    xy_micrometers: true
+
+  drawer:
+    - {key: santec, label: "Santec", open: true, note: "qt3santec goes here when TQLM is ported."}
+    - {key: power, label: "Power at objective", open: true, note: "qt3power goes here when TQLM is ported."}
+    - {key: superk, label: "SuperK", open: false, note: "qt3chromatune goes here when TQLM is ported."}
+    - {key: piezo, label: "Piezo stage", open: false, note: "qt3move piezo goes here when TQLM is ported."}
+    - {key: flippers, label: "Flip mirrors", open: true, note: "qt3mirror goes here when TQLM is ported."}
+    - {key: pulseblaster, label: "Pulse Blaster", open: false, note: "qt3pb goes here when TQLM is ported."}

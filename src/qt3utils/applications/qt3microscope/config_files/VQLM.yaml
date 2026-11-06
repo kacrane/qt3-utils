@@ -1,0 +1,33 @@
+# QT3 Microscope setup profile for the VQLM.
+# Lists what the window shows. Hardware settings are added step by step.
+QT3MICROSCOPE:
+  setup: VQLM
+  title: "QT3 Microscope — VQLM"
+  geometry: 1440x900
+  drawer_width: 390
+
+  # Status strip along the top, left to right.
+  status:
+    - {key: laser, label: "Laser"}
+    - {key: power, label: "P obj"}
+    - {key: counts, label: "APD"}
+    - {key: ple, label: "PLE laser"}
+    - {key: piezo, label: "Piezo"}
+    - {key: flippers, label: "Flippers"}
+    - {key: daq, label: "DAQ"}
+
+  # Measurement tabs in the middle.
+  measurements: ["Image scan", "Line scan", "PLE"]
+
+  # Strip along the bottom. VQLM micrometers are manual, so no XY box.
+  bottom:
+    scope_label: "Scope — APD"
+    xy_micrometers: false
+
+  # Drawer sections, top to bottom. open: starts unfolded.
+  drawer:
+    - {key: laser, label: "Laser (QICK-DAWG)", open: true, note: "qt3laser goes here in step 2."}
+    - {key: power, label: "Power at objective", open: true, note: "qt3power goes here in step 2."}
+    - {key: stage, label: "Stage", open: false, note: "qdlmove goes here in step 4."}
+    - {key: flippers, label: "Flip mirrors", open: true, note: "qt3mirror goes here in step 4."}
+    - {key: pulseblaster, label: "Pulse Blaster", open: false, note: "qt3pb goes here in step 6."}
