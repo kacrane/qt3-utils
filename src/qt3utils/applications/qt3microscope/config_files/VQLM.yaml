@@ -30,7 +30,7 @@ QT3MICROSCOPE:
     - {key: flippers, label: "Flip mirrors", open: true}
     - {key: power, label: "Power at objective", open: true}
     - {key: stage, label: "Stage (piezos)", open: false}
-    - {key: pulseblaster, label: "Pulse Blaster", open: false, note: "qt3pb goes here in step 6."}
+    - {key: pulseblaster, label: "Pulse Blaster", open: false, hidden: true, note: "qt3pb goes here in step 6."}
 
   # Hardware settings. A drawer section gets a working panel when its
   # hardware is listed here.

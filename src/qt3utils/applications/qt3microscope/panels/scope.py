@@ -35,6 +35,20 @@ def format_rate(value, is_rate):
     return f"{value:.0f} {unit}"
 
 
+def _qt3utils_version():
+    """Version for the file metadata; a copied (not installed) qt3utils may not have one."""
+    try:
+        import qt3utils
+        return str(getattr(qt3utils, "__version__"))
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version
+        return version("qt3utils")
+    except Exception:
+        return "unknown"
+
+
 class ScopePanel:
     def __init__(self, section, hub, cfg, set_status=None, scale=1.0):
         self.section = section
@@ -313,7 +327,7 @@ class ScopePanel:
     def save(self):
         if self.running or not self.data_x:
             return
-        default_name = f'scope_{self.timestamp.strftime("%Y%m%d")}'
+        default_name = f'scope_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
         afile = filedialog.asksaveasfilename(
             filetypes=[("Image with dataset", "*.png"), ("Dataset", "*.hdf5")],
             initialfile=default_name + ".png", initialdir=self.last_save_directory)
@@ -335,12 +349,11 @@ class ScopePanel:
     def _save_hdf5(self, path, stem):
         import h5py
         import numpy as np
-        import qt3utils
         with h5py.File(path, "w") as df:
             ds = df.create_dataset("file_metadata", data=np.array(
                 ["application", "qt3utils_version", "timestamp", "original_name"], dtype="S"))
             ds.attrs["application"] = "qt3utils.qt3scope"
-            ds.attrs["qt3utils_version"] = qt3utils.__version__
+            ds.attrs["qt3utils_version"] = _qt3utils_version()
             ds.attrs["timestamp"] = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             ds.attrs["original_name"] = stem
             ds.attrs["signal_source"] = "counter"

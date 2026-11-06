@@ -28,4 +28,4 @@ QT3MICROSCOPE:
     - {key: power, label: "Power at objective", open: true, note: "qt3power goes here when TQLM is ported."}
     - {key: superk, label: "SuperK", open: false, note: "qt3chromatune goes here when TQLM is ported."}
     - {key: piezo, label: "Piezo stage", open: false, note: "qt3move piezo goes here when TQLM is ported."}
-    - {key: pulseblaster, label: "Pulse Blaster", open: false, note: "qt3pb goes here when TQLM is ported."}
+    - {key: pulseblaster, label: "Pulse Blaster", open: false, hidden: true, note: "qt3pb goes here when TQLM is ported."}

@@ -115,6 +115,9 @@ class MicroscopeWindow:
         self.drawer_shown = tk.BooleanVar(value=True)
         view.add_checkbutton(label="Show instrument drawer", variable=self.drawer_shown,
                              command=self._toggle_drawer)
+        # Drawer sections to show; filled in once the drawer is built.
+        self.sections_menu = tk.Menu(view, tearoff=0)
+        view.add_cascade(label="Drawer sections", menu=self.sections_menu)
         bar.add_cascade(label="View", menu=view)
         self.window.config(menu=bar)
 
@@ -190,14 +193,30 @@ class MicroscopeWindow:
         scroll = ScrollableFrame(outer)
         scroll.pack(fill="both", expand=True)
         self.drawer_scroll = scroll
+        self.drawer_order = []
+        self.section_shown = {}
         for item in self.profile.get("drawer", []):
             sec = CollapsibleSection(scroll.inner, item["label"], start_open=item.get("open", False))
-            sec.pack(fill="x", padx=6, pady=3)
+            # hidden: true leaves a section out of the drawer until View > Drawer sections shows it.
+            var = tk.BooleanVar(value=not item.get("hidden", False))
+            self.section_shown[item["key"]] = var
+            self.drawer_order.append(item["key"])
+            self.sections_menu.add_checkbutton(label=item["label"], variable=var,
+                                               command=self._repack_drawer)
             note = item.get("note", "Not connected yet.")
             ttk.Label(sec.body, text=note, foreground="#555555", wraplength=self.px(330),
                       justify="left").pack(anchor="w")
             self.sections[item["key"]] = sec
+        self._repack_drawer()
         return outer
+
+    def _repack_drawer(self):
+        """Show the drawer sections that are switched on, in profile order."""
+        for key in self.drawer_order:
+            self.sections[key].pack_forget()
+        for key in self.drawer_order:
+            if self.section_shown[key].get():
+                self.sections[key].pack(fill="x", padx=6, pady=3)
 
     def _set_all(self, value):
         for key, sec in self.sections.items():
