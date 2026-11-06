@@ -3,9 +3,10 @@ QT3 Microscope: one window for the whole microscope.
 
 A status strip along the top, measurement tabs in the middle, a scope
 strip along the bottom and a folding instrument drawer on the right.
-Instruments are added step by step (step 2: laser and power; step 3: the
-scope strip, formerly qdlscope). A
-drawer section without a panel yet says which later step fills it in.
+Instruments are added step by step: laser and power (step 2), the scope
+strip, formerly qdlscope (step 3), and the stage, formerly qdlmove, and
+flip mirrors (step 4). A drawer section without a panel yet says which
+later step fills it in.
 All hardware calls go through the instrument hub (hub.py): one worker
 thread per device, so a slow device never freezes the window.
 
@@ -256,6 +257,18 @@ class MicroscopeWindow:
                                               on_layout=self._place_sash)
             except Exception as e:
                 self._panel_failed("power", e)
+
+        for key, module, cls, chip in (("stage", "stage", "StagePanel", "piezo"),
+                                       ("flippers", "flippers", "FlippersPanel", "flippers")):
+            if key in self.sections and key in hw:
+                try:
+                    mod = __import__(f"qt3utils.applications.qt3microscope.panels.{module}", fromlist=[cls])
+                    self._clear_note(key)
+                    panel = getattr(mod, cls)(self.sections[key], self.hub, hw[key],
+                                              set_status=self._chip_setter(chip))
+                    setattr(self, f"{key}_panel", panel)
+                except Exception as e:
+                    self._panel_failed(key, e)
 
     def _panel_failed(self, key, err):
         logger.exception("%s panel failed to start", key)

@@ -1,0 +1,212 @@
+"""
+Stage panel: set and step the piezo axes.
+
+Formerly qdlmove: this is the qdlmove app (Set position, Step, Current, and
+keyboard stepping) placed in a drawer section. The axes and their hardware
+come from the profile, like the qdlmove YAML.
+
+Differences from qdlmove:
+- Opening the window does not move the piezos (qdlmove set them to 0 at
+  launch). "Current" shows a dash until an axis is set once.
+- Keyboard stepping ignores keys typed into entry boxes, and only works
+  while this section is open, so arrow keys elsewhere in the window can't
+  move the stage by accident.
+- Moves run on the hub's DAQ worker; holding a key down adds the steps up
+  instead of queueing hundreds of moves.
+"""
+
+import importlib
+import logging
+import tkinter as tk
+from tkinter import ttk
+
+from qt3utils.applications.qt3microscope.widgets import AMBER, GRAY, GREEN, RED
+
+logger = logging.getLogger(__name__)
+
+# key -> (axis index, direction)
+STEP_KEYS = {
+    "Left": (0, -1), "Right": (0, 1),
+    "Down": (1, -1), "Up": (1, 1),
+    "minus": (2, -1), "KP_Subtract": (2, -1),
+    "plus": (2, 1), "equal": (2, 1), "KP_Add": (2, 1),
+}
+TYPING_CLASSES = {"Entry", "TEntry", "Spinbox", "TSpinbox", "Text", "TCombobox"}
+
+
+def make_positioner(spec):
+    """Build a positioner from {import_path, class_name, configure} (qdlmove YAML style)."""
+    module = importlib.import_module(spec["import_path"])
+    cls = getattr(module, spec["class_name"])
+    obj = cls()
+    obj.configure(spec.get("configure", {}) or {})
+    return obj
+
+
+class StagePanel:
+    def __init__(self, section, hub, cfg, set_status=None):
+        self.section = section
+        self.worker = hub.worker("daq")
+        self.axes = cfg.get("axes", [])
+        self.precision = int(cfg.get("precision", 2))
+        self.default_step = float(cfg.get("step", 0.1))
+        self.title = cfg.get("title", "Piezos")
+        self.set_status = set_status or (lambda value, colour: None)
+        self.positioners = [None] * len(self.axes)
+        self.positions = [None] * len(self.axes)
+        self._busy = [False] * len(self.axes)
+        self._pending = [0.0] * len(self.axes)
+        self._closing = False
+        self._build(section.body)
+        self.window = section.winfo_toplevel()
+        self._bindings = []
+        hub.on_close(self.close)
+
+    # -- GUI ---------------------------------------------------------------
+    def _build(self, body):
+        grid = ttk.Frame(body)
+        grid.pack(fill="x")
+        for col, text in enumerate(("", "Set (µm)", "", "Step (µm)", "Current")):
+            ttk.Label(grid, text=text, foreground=GRAY).grid(row=0, column=col, padx=2)
+        self.rows = []
+        for i, ax in enumerate(self.axes):
+            r = i + 1
+            ttk.Label(grid, text=ax.get("label", f"Axis {i + 1}"),
+                      font=("TkDefaultFont", 10, "bold")).grid(row=r, column=0, sticky="w", padx=(0, 4))
+            set_e = ttk.Entry(grid, width=8)
+            set_e.insert(0, "0")
+            set_e.grid(row=r, column=1, padx=2, pady=1)
+            set_b = ttk.Button(grid, text="Set", width=4, command=lambda i=i: self.set_axis(i))
+            set_b.grid(row=r, column=2, padx=2)
+            set_e.bind("<Return>", lambda _e, i=i: self.set_axis(i))
+            step_e = ttk.Entry(grid, width=7)
+            step_e.insert(0, f"{self.default_step:g}")
+            step_e.grid(row=r, column=3, padx=2)
+            cur = ttk.Label(grid, text="—", width=9, anchor="e", relief="sunken")
+            cur.grid(row=r, column=4, padx=2)
+            self.rows.append({"set": set_e, "step": step_e, "cur": cur, "btn": set_b})
+
+        keys = ttk.Frame(body)
+        keys.pack(fill="x", pady=(6, 0))
+        self.step_var = tk.IntVar(value=0)
+        ttk.Checkbutton(keys, text="Arrow-key stepping", variable=self.step_var,
+                        command=self._toggle_keys).pack(side="left")
+        self.keys_note = tk.Label(keys, text="", fg="black")
+        self.keys_note.pack(side="left", padx=6)
+        self._note_bg = self.keys_note.cget("bg")
+
+        self.msg_var = tk.StringVar(value=self._hardware_text())
+        ttk.Label(body, textvariable=self.msg_var, foreground=GRAY, justify="left",
+                  wraplength=int(330 * max(1.0, body.winfo_fpixels("1i") / 96.0))).pack(anchor="w", pady=(4, 0))
+
+    def _hardware_text(self):
+        chans = []
+        for ax in self.axes:
+            c = (ax.get("configure") or {})
+            chans.append(f"{ax.get('label', '?')} {c.get('device_name', '')}/{c.get('write_channel', '')}")
+        return ", ".join(chans) + ". Current shows — until an axis is set."
+
+    def _show_positions(self):
+        for row, pos in zip(self.rows, self.positions):
+            row["cur"].configure(text="—" if pos is None else f"{pos:.{self.precision}f}")
+        known = [f"{ax.get('label', '?')} {p:.{self.precision}f}"
+                 for ax, p in zip(self.axes, self.positions) if p is not None]
+        summary = "  ".join(known) + " µm" if known else "—"
+        self.section.set_summary(summary)
+        if known:
+            self.set_status(" ".join(f"{p:.1f}" for p in self.positions if p is not None), GREEN)
+
+    # -- keyboard stepping ----------------------------------------------------
+    def _toggle_keys(self):
+        for seq, funcid in self._bindings:
+            self.window.unbind(seq, funcid)
+        self._bindings = []
+        if self.step_var.get():
+            for key in STEP_KEYS:
+                seq = f"<KeyPress-{key}>"
+                self._bindings.append((seq, self.window.bind(seq, self._on_key, add="+")))
+            labels = [ax.get("label", "?") for ax in self.axes]
+            hint = "←/→ " + labels[0] if labels else ""
+            if len(labels) > 1:
+                hint += ", ↑/↓ " + labels[1]
+            if len(labels) > 2:
+                hint += ", +/− " + labels[2]
+            self.keys_note.configure(text=f"ON: {hint}", bg=AMBER)
+        else:
+            self.keys_note.configure(text="", bg=self._note_bg)
+
+    def _on_key(self, event):
+        if self._closing or not self.step_var.get():
+            return
+        if event.widget.winfo_class() in TYPING_CLASSES:
+            return  # typing a number, not stepping
+        if not self.section.is_open:
+            self.msg_var.set("Open the Stage section to step with the keys.")
+            return
+        axis, sign = STEP_KEYS.get(event.keysym, (None, 0))
+        if axis is None or axis >= len(self.axes):
+            return
+        try:
+            dx = float(self.rows[axis]["step"].get())
+        except ValueError:
+            self.msg_var.set("Step must be a number.")
+            return
+        if self.positions[axis] is None:
+            self.msg_var.set(f"Set {self.axes[axis].get('label', 'the axis')} once before stepping.")
+            return
+        self._pending[axis] += sign * dx
+        self._flush(axis)
+        return "break"
+
+    # -- moves --------------------------------------------------------------
+    def set_axis(self, i):
+        try:
+            target = float(self.rows[i]["set"].get())
+        except ValueError:
+            self.msg_var.set("Set position must be a number.")
+            return
+        if self._busy[i]:
+            self.msg_var.set("Still moving, try again.")
+            return
+        self._pending[i] = 0.0
+        self._submit_move(i, target)
+
+    def _flush(self, i):
+        if self._busy[i] or self._pending[i] == 0.0 or self.positions[i] is None:
+            return
+        target = self.positions[i] + self._pending[i]
+        self._pending[i] = 0.0
+        self._submit_move(i, target)
+
+    def _submit_move(self, i, target):
+        self._busy[i] = True
+        self.worker.submit(f"move {self.axes[i].get('label', i)}",
+                           lambda: self._daq_move(i, target),
+                           lambda ok, res: self._moved(i, target, ok, res))
+
+    def _daq_move(self, i, target):
+        if self.positioners[i] is None:
+            self.positioners[i] = make_positioner(self.axes[i])
+        p = self.positioners[i]
+        lo, hi = getattr(p, "min_position", None), getattr(p, "max_position", None)
+        if lo is not None and hi is not None and not lo <= target <= hi:
+            raise ValueError(f"{target:g} µm is outside {lo:g} to {hi:g} µm")
+        p.go_to_position(target)
+        return target
+
+    def _moved(self, i, target, ok, result):
+        self._busy[i] = False
+        if self._closing:
+            return
+        if ok:
+            self.positions[i] = result
+            self.msg_var.set(self._hardware_text())
+            self._show_positions()
+            self._flush(i)
+        else:
+            self._pending[i] = 0.0
+            self.msg_var.set(f"{self.axes[i].get('label', 'Axis')}: {result}")
+            self.set_status("error", RED)
+
+    def close(self):
+        self._closing = True

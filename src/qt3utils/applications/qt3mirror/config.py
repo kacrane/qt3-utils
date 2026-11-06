@@ -116,6 +116,11 @@ def load_flipper_config(path: Optional[str] = None) -> Qt3MirrorConfig:
             raw = yaml.safe_load(f)
         source_label = "qt3mirror_base.yaml (bundled)"
 
+    return load_flipper_config_dict(raw, source_label)
+
+
+def load_flipper_config_dict(raw: Any, source_label: str = "profile") -> Qt3MirrorConfig:
+    """Build the config from an already-loaded mapping (e.g. a QT3 Microscope profile section)."""
     data = _require_mapping(raw, "root")
 
     device = data.get("device")

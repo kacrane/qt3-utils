@@ -27,9 +27,9 @@ QT3MICROSCOPE:
   # Drawer sections, top to bottom. open: starts unfolded.
   drawer:
     - {key: laser, label: "Laser (QICK-DAWG)", open: true}
-    - {key: flippers, label: "Flip mirrors", open: true, note: "qt3mirror goes here in step 4."}
+    - {key: flippers, label: "Flip mirrors", open: true}
     - {key: power, label: "Power at objective", open: true}
-    - {key: stage, label: "Stage", open: false, note: "qdlmove goes here in step 4."}
+    - {key: stage, label: "Stage (piezos)", open: false}
     - {key: pulseblaster, label: "Pulse Blaster", open: false, note: "qt3pb goes here in step 6."}
 
   # Hardware settings. A drawer section gets a working panel when its
@@ -52,3 +52,48 @@ QT3MICROSCOPE:
       auto_start: true
       detectors:
         - {name: PDA100A2, channel: ai4, label: "Excitation", v_to_mw: [7.5461e-4, 0.64023, -8.3511e-3]}
+    # Stage drawer (formerly qdlmove; values from qdlmove_base.yaml).
+    # Each axis builds its positioner from import_path/class_name/configure.
+    # step: starting step size (µm) for arrow-key stepping.
+    stage:
+      title: Piezos
+      precision: 2
+      step: 0.1
+      axes:
+        - label: X
+          import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+          class_name: NidaqPositionController
+          configure: {device_name: Dev1, write_channel: ao0, read_channel: , move_settle_time: 0.0,
+                      scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
+                      min_position: -40.0, max_position: 40.0, invert_axis: true}
+        - label: Y
+          import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+          class_name: NidaqPositionController
+          configure: {device_name: Dev1, write_channel: ao1, read_channel: , move_settle_time: 0.0,
+                      scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
+                      min_position: -40.0, max_position: 40.0, invert_axis: true}
+        - label: Z
+          import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+          class_name: NidaqPositionController
+          configure: {device_name: Dev1, write_channel: ao2, read_channel: , move_settle_time: 0.0,
+                      scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
+                      min_position: -40.0, max_position: 40.0, invert_axis: true}
+    # Flip mirrors (same layout as the VQLM qt3mirror_base.yaml).
+    flippers:
+      device: Dev1
+      sync_pulse_low_ms: 15.0
+      sync_pulse_high_ms: 15.0
+      flippers:
+        - {name: M5, line: port1/line2}
+        - {name: M6, line: port1/line3}
+        - {name: M7, line: port1/line4}
+        - {name: M8, line: port1/line5}
+      presets:
+        - {label: "532nm - Camera", targets: {M5: up, M6: up, M7: down}}
+        - {label: "532nm - SPCM - Confocal", targets: {M5: up, M6: down, M8: up}}
+        - {label: "532nm - SPCM - g(2)", targets: {M5: up, M6: down, M8: down}}
+        - {label: "532nm - Spectrometer", targets: {M5: up, M6: up, M7: up}}
+        - {label: "SuperK - Camera", targets: {M5: down, M6: up, M7: down}}
+        - {label: "SuperK - SPCM - Confocal", targets: {M5: down, M6: down, M8: up}}
+        - {label: "SuperK - SPCM - g(2)", targets: {M5: down, M6: down, M8: down}}
+        - {label: "SuperK - Spectrometer", targets: {M5: down, M6: up, M7: up}}
