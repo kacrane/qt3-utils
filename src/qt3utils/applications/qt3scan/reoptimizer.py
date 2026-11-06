@@ -1,3 +1,5 @@
+# Formerly qdlscan: qt3scan is the qdlscan app (qdlutils/qt3utils.applications.qdlscan),
+# renamed for the single qt3utils package. The older qt3scan it replaces is in git history.
 import logging
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Tuple, Union
@@ -5,7 +7,7 @@ from typing import Dict, Iterable, Optional, Tuple, Union
 import numpy as np
 from scipy.optimize import curve_fit
 
-from qt3utils.applications.qdlscan.application_controller import ScanController
+from qt3utils.applications.qt3scan.application_controller import ScanController
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ class Reoptimizer:
     """
     Headless line-scan optimizer for experiment pipelines.
 
-    This class reuses the same core qdlscan controller calls used by the GUI
+    This class reuses the same core qt3scan controller calls used by the GUI
     optimization flow, but without creating any Tk windows.
     """
 

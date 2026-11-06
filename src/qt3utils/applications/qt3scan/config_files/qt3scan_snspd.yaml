@@ -1,43 +1,16 @@
-# qt3scan with Single Quantum WebSQ (SNSPD over lab LAN, Option B).
-# Copy or symlink as your active config; set host to Atlas static IP after IT assignment.
+# Formerly qdlscan (QDLSCAN config of qt3utils.applications.qdlscan).
+# qt3scan with Single Quantum WebSQ (SNSPD over lab LAN)
 QT3SCAN:
   ApplicationController:
     import_path : qt3utils.applications.qt3scan.application_controller
     class_name : ScanController
     hardware :
-      counter : Counter
-      photodiode : Photodiode
-      snspd : Snspd
+      counter : Snspd
       x_axis_control : PiezoX
       y_axis_control : PiezoY
       z_axis_control : PiezoZ
     configure :
       inter_scan_settle_time : 0.01
-      signal_source : snspd
-
-  Counter:
-    import_path : qt3utils.hardware.nidaq.counters.nidaqtimedratecounter
-    class_name  : NidaqTimedRateCounter
-    configure :
-      daq_name : Dev1
-      signal_terminal : PFI0
-      clock_terminal :
-      clock_rate: 100000
-      sample_time_in_seconds : 1
-      read_write_timeout : 10
-      signal_counter : ctr2
-
-  Photodiode:
-    import_path : qt3utils.hardware.nidaq.analoginputs.nidaqtimedanaloginput
-    class_name  : NidaqTimedAnalogMean
-    configure :
-      daq_name : Dev1
-      channel : ai1
-      clock_rate: 100000
-      sample_time_in_seconds : 1
-      read_write_timeout : 10
-      min_val : -10.0
-      max_val : 10.0
 
   Snspd:
     import_path : qt3utils.hardware.singlequantum.websq_timed_counter
@@ -51,3 +24,45 @@ QT3SCAN:
       auto_enable_detectors : false
       connect_timeout : 10.0
       read_timeout : 30.0
+
+  PiezoX:
+    import_path : qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+    class_name  : NidaqPositionController
+    configure:
+      device_name: Dev1
+      write_channel: ao0
+      read_channel:
+      move_settle_time: 0.0
+      scale_microns_per_volt: 8
+      zero_microns_volt_offset: 5
+      min_position: -40.0
+      max_position: 40.0
+      invert_axis: True
+
+  PiezoY:
+    import_path : qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+    class_name  : NidaqPositionController
+    configure:
+      device_name: Dev1
+      write_channel: ao1
+      read_channel: 
+      move_settle_time: 0.0
+      scale_microns_per_volt: 8
+      zero_microns_volt_offset: 5
+      min_position: -40.0
+      max_position: 40.0
+      invert_axis: True
+
+  PiezoZ:
+    import_path : qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+    class_name  : NidaqPositionController
+    configure:
+      device_name: Dev1
+      write_channel: ao2
+      read_channel: 
+      move_settle_time: 0.0
+      scale_microns_per_volt: 8
+      zero_microns_volt_offset: 5
+      min_position: -40.0
+      max_position: 40.0
+      invert_axis: False

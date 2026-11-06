@@ -1,3 +1,5 @@
+# Formerly qdlscan: qt3scan is the qdlscan app (qdlutils/qt3utils.applications.qdlscan),
+# renamed for the single qt3utils package. The older qt3scan it replaces is in git history.
 import logging
 
 import matplotlib
@@ -44,13 +46,13 @@ class LauncherControlPanel:
         row += 1
         tk.Label(scan_frame, text='Range (μm)').grid(row=row, column=0, padx=5, pady=2)
         self.image_range_entry = tk.Entry(scan_frame, width=10)
-        self.image_range_entry.insert(0, 50)
+        self.image_range_entry.insert(0, 80)
         self.image_range_entry.grid(row=row, column=1, padx=5, pady=2)
         # Number of pixels
         row += 1
         tk.Label(scan_frame, text='Number of pixels').grid(row=row, column=0, padx=5, pady=2)
         self.image_pixels_entry = tk.Entry(scan_frame, width=10)
-        self.image_pixels_entry.insert(0, 50)
+        self.image_pixels_entry.insert(0, 80)
         self.image_pixels_entry.grid(row=row, column=1, padx=5, pady=2)
         # Scan speed
         row += 1
@@ -106,39 +108,40 @@ class LauncherControlPanel:
         # Define frame for DAQ and control
         daq_frame = tk.Frame(main_frame)
         daq_frame.pack(side=tk.TOP, padx=0, pady=0)
+        # Add buttons and text
         row = 0
-        tk.Label(daq_frame, text='Signal', font='Helvetica 12').grid(
-            row=row, column=0, columnspan=2, pady=[15, 4])
+        tk.Label(daq_frame, 
+                 text='DAQ control', 
+                 font='Helvetica 14').grid(row=row, column=0, pady=[15,5], columnspan=2)
+        # X axis
         row += 1
-        self.signal_source_var = tk.StringVar(value='counter')
-        self.counter_radio = tk.Radiobutton(
-            daq_frame,
-            text='Counter (PFI)',
-            variable=self.signal_source_var,
-            value='counter',
-        )
-        self.counter_radio.grid(row=row, column=0, columnspan=2, sticky='w', padx=5)
+        self.x_axis_set_button = tk.Button(daq_frame, text='Set X (μm)', width=10)
+        self.x_axis_set_button.grid(row=row, column=0, columnspan=1, padx=5, pady=[5,1])
+        self.x_axis_set_entry = tk.Entry(daq_frame, width=10)
+        self.x_axis_set_entry.insert(0, 0)
+        self.x_axis_set_entry.grid(row=row, column=1, padx=5, pady=[5,1])
+        # Y axis
         row += 1
-        self.photodiode_radio = tk.Radiobutton(
-            daq_frame,
-            text='Photodiode (AI1)',
-            variable=self.signal_source_var,
-            value='photodiode',
-        )
-        self.photodiode_radio.grid(row=row, column=0, columnspan=2, sticky='w', padx=5)
+        self.y_axis_set_button = tk.Button(daq_frame, text='Set Y (μm)', width=10)
+        self.y_axis_set_button.grid(row=row, column=0, columnspan=1, padx=5, pady=1)
+        self.y_axis_set_entry = tk.Entry(daq_frame, width=10)
+        self.y_axis_set_entry.insert(0, 0)
+        self.y_axis_set_entry.grid(row=row, column=1, padx=5, pady=1)
+        # Z axis
         row += 1
-        self.snspd_radio = tk.Radiobutton(
-            daq_frame,
-            text='SNSPD (Ethernet)',
-            variable=self.signal_source_var,
-            value='snspd',
-        )
-        self.snspd_radio.grid(row=row, column=0, columnspan=2, sticky='w', padx=5)
+        self.z_axis_set_button = tk.Button(daq_frame, text='Set Z (μm)', width=10)
+        self.z_axis_set_button.grid(row=row, column=0, columnspan=1, padx=5, pady=[1,5])
+        self.z_axis_set_entry = tk.Entry(daq_frame, width=10)
+        self.z_axis_set_entry.insert(0, 0)
+        self.z_axis_set_entry.grid(row=row, column=1, padx=5, pady=1)
         # Get button
         row += 1
-        self.open_counter_button = tk.Button(daq_frame, text='Open scope', width=20)
-        self.open_counter_button.grid(row=row, column=0, columnspan=2, pady=[5, 5])
-        daq_frame.columnconfigure(0, weight=1)
+        self.get_position_button = tk.Button(daq_frame, text='Get current position', width=20)
+        self.get_position_button.grid(row=row, column=0, columnspan=2, pady=[1,5])
+        # Get button
+        row += 1
+        self.open_counter_button = tk.Button(daq_frame, text='Open counter', width=20)
+        self.open_counter_button.grid(row=row, column=0, columnspan=2, pady=[5,5])
 
         ''' I do not think that we need to implement this since most people will not
             change settings dynamically. But, it can be added back in by uncommenting
@@ -193,7 +196,7 @@ class LineScanApplicationView:
         self.data_viewport.ax.set_ylim(y_axis_limits)
 
         self.data_viewport.ax.set_xlabel(f'{self.application.axis} position (μm)', fontsize=14)
-        self.data_viewport.ax.set_ylabel(self.application.intensity_ylabel, fontsize=14)
+        self.data_viewport.ax.set_ylabel(f'Intensity (cts/s)', fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
 
         self.data_viewport.canvas.draw()
@@ -226,7 +229,7 @@ class LineScanApplicationView:
         self.data_viewport.ax.set_ylim(y_axis_limits)
 
         self.data_viewport.ax.set_xlabel(f'{self.application.axis} position (μm)', fontsize=14)
-        self.data_viewport.ax.set_ylabel(self.application.intensity_ylabel, fontsize=14)
+        self.data_viewport.ax.set_ylabel(f'Intensity (cts/s)', fontsize=14)
         self.data_viewport.ax.grid(alpha=0.3)
 
         self.data_viewport.canvas.draw()
@@ -359,8 +362,7 @@ class ImageScanApplicationView:
 
         self.data_viewport.ax.set_xlabel(f'{self.application.axis_1} position (μm)', fontsize=14)
         self.data_viewport.ax.set_ylabel(f'{self.application.axis_2} position (μm)', fontsize=14)
-        self.data_viewport.cbar.ax.set_ylabel(
-            self.application.intensity_ylabel, fontsize=14, rotation=270, labelpad=15)
+        self.data_viewport.cbar.ax.set_ylabel('Intensity (cts/s)', fontsize=14, rotation=270, labelpad=15)
         self.data_viewport.ax.grid(alpha=0.3)
 
         # Normalize the figure if not already normalized
@@ -465,13 +467,13 @@ class ImageFigureControlPanel:
                  font='Helvetica 14').grid(row=row, column=0, pady=[10,5], columnspan=2)
         # Minimum
         row += 1
-        tk.Label(image_settings_frame, text=settings_dict.get('image_norm_min_label', 'Minimum (cts/s)')).grid(row=row, column=0, padx=5, pady=2)
+        tk.Label(image_settings_frame, text='Minimum (cts/s)').grid(row=row, column=0, padx=5, pady=2)
         self.image_minimum = tk.Entry(image_settings_frame, width=10)
         self.image_minimum.insert(0, 0)
         self.image_minimum.grid(row=row, column=1, padx=5, pady=2)
         # Maximum
         row += 1
-        tk.Label(image_settings_frame, text=settings_dict.get('image_norm_max_label', 'Maximum (cts/s)')).grid(row=row, column=0, padx=5, pady=2)
+        tk.Label(image_settings_frame, text='Maximum (cts/s)').grid(row=row, column=0, padx=5, pady=2)
         self.image_maximum = tk.Entry(image_settings_frame, width=10)
         self.image_maximum.insert(0, 10000)
         self.image_maximum.grid(row=row, column=1, padx=5, pady=2)
