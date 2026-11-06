@@ -59,6 +59,7 @@ DEFAULT_HOST = "192.168.3.1"
 DEFAULT_PORT = 8888
 DEFAULT_NAME = "myqick"
 DEFAULT_BOARD = "RFSoC4x2"
+DEFAULT_BOOT_SETTLE_S = 120
 DEFAULT_BITFILE = "/home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/qick_4x2.bit"
 
 # Kernel TCP keepalive: first probe after 60 s idle, then every 10 s, give up
@@ -184,7 +185,26 @@ def watchdog_ok(Pyro4, host, port, server_name, threads):
         return False
 
 
+def wait_for_boot_to_settle(settle_s):
+    """
+    At boot, PYNQ sets up the USB gadget and the FPGA in the background. Loading
+    QICK in the middle of that knocked the board's USB network link off the
+    Windows PC (seen 2026-11-06). Wait until the board has been up `settle_s`
+    seconds. Restarts after that are not delayed.
+    """
+    try:
+        with open("/proc/uptime") as f:
+            uptime = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return
+    if uptime < settle_s:
+        logger.info("Board booted %.0f s ago; waiting %.0f s for PYNQ to finish booting",
+                    uptime, settle_s - uptime)
+        time.sleep(settle_s - uptime)
+
+
 def serve(args):
+    wait_for_boot_to_settle(args.boot_settle)
     Pyro4 = configure_pyro()
     wait_for_address(args.host)
     ns_daemon, ns_thread = start_name_server(Pyro4, args.host, args.port)
@@ -213,7 +233,8 @@ def serve(args):
 def unit_text(args, script_path):
     run_args = " ".join(shlex.quote(a) for a in [
         script_path, "--host", args.host, "--port", str(args.port),
-        "--name", args.name, "--bitfile", args.bitfile])
+        "--name", args.name, "--bitfile", args.bitfile,
+        "--boot-settle", str(args.boot_settle)])
     # The PYNQ venv and XRT environment are normally set up by login shells;
     # a systemd service has to source them itself.
     shell_cmd = (
@@ -307,6 +328,9 @@ def parse_args(argv=None):
     p.add_argument("--name", default=DEFAULT_NAME,
                    help="Name the QICK object is registered under (default %(default)s)")
     p.add_argument("--bitfile", default=DEFAULT_BITFILE, help="QICK firmware .bit file")
+    p.add_argument("--boot-settle", type=float, default=DEFAULT_BOOT_SETTLE_S,
+                   help="Don't start until the board has been up this many seconds "
+                        "(default %(default)s)")
     p.add_argument("--board", default=DEFAULT_BOARD,
                    help="PYNQ board name for the BOARD variable (default %(default)s)")
     g = p.add_mutually_exclusive_group()
