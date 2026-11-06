@@ -10,7 +10,7 @@ QT3MICROSCOPE:
   status:
     - {key: laser, label: "Laser"}
     - {key: power, label: "P obj"}
-    - {key: counts, label: "APD"}
+    - {key: counts, label: "SPCM"}
     - {key: ple, label: "PLE laser"}
     - {key: piezo, label: "Piezo"}
     - {key: flippers, label: "Flippers"}
@@ -21,7 +21,7 @@ QT3MICROSCOPE:
 
   # Strip along the bottom. VQLM micrometers are manual, so no XY box.
   bottom:
-    scope_label: "Scope — APD"
+    scope_label: "Scope — SPCM"
     xy_micrometers: false
 
   # Drawer sections, top to bottom. open: starts unfolded.

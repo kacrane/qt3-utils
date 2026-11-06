@@ -53,7 +53,7 @@ def load_profile(setup=None, path=None):
     """Read a setup profile. An explicit path wins over the setup name."""
     if path is None:
         path = os.path.join(CONFIG_DIR, f"{(setup or DEFAULT_SETUP).upper()}.yaml")
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:  # Windows would read it as cp1252
         return yaml.safe_load(f)["QT3MICROSCOPE"]
 
 
@@ -64,10 +64,18 @@ class MicroscopeWindow:
         self.setup = profile.get("setup", "?")
         self.sections = {}
         self.chips = {}
+        # Pixel sizes below are written for a 96 dpi screen; scale them to this one.
+        self.scale = max(1.0, window.winfo_fpixels("1i") / 96.0)
 
         window.title(profile.get("title", f"QT3 Microscope — {self.setup}"))
-        window.geometry(profile.get("geometry", "1440x900"))
-        window.minsize(1100, 700)
+        w, h = (int(v) for v in profile.get("geometry", "1440x900").split("x"))
+        window.geometry(f"{self.px(w)}x{self.px(h)}")
+        window.minsize(self.px(1100), self.px(700))
+        if profile.get("start_maximized", True):
+            try:
+                window.state("zoomed")  # Windows
+            except tk.TclError:
+                pass
         if os.path.exists(ICON_PATH):
             try:
                 window.iconbitmap(ICON_PATH)
@@ -79,6 +87,10 @@ class MicroscopeWindow:
         self._build_body()
         self._build_footer()
         logger.info("QT3 Microscope opened with setup %s", self.setup)
+
+    def px(self, value):
+        """Convert a 96 dpi pixel size to this screen."""
+        return int(round(value * self.scale))
 
     # ----- top -------------------------------------------------------------
     def _build_menu(self):
@@ -131,9 +143,9 @@ class MicroscopeWindow:
         self.window.after(50, self._place_sash)
 
     def _place_sash(self):
-        width = self.profile.get("drawer_width", 390)
+        width = self.px(self.profile.get("drawer_width", 390))
         try:
-            self.hpane.sashpos(0, max(500, self.window.winfo_width() - width))
+            self.hpane.sashpos(0, max(self.px(500), self.window.winfo_width() - width))
         except tk.TclError:
             pass
 
@@ -153,7 +165,7 @@ class MicroscopeWindow:
         return frame
 
     def _build_drawer(self, parent):
-        outer = ttk.Frame(parent, width=self.profile.get("drawer_width", 390))
+        outer = ttk.Frame(parent, width=self.px(self.profile.get("drawer_width", 390)))
         head = ttk.Frame(outer, padding=(8, 6))
         head.pack(fill="x")
         ttk.Label(head, text="Instruments", font=("TkDefaultFont", 10, "bold")).pack(side="left")
@@ -166,7 +178,7 @@ class MicroscopeWindow:
             sec = CollapsibleSection(scroll.inner, item["label"], start_open=item.get("open", False))
             sec.pack(fill="x", padx=6, pady=3)
             note = item.get("note", "Not connected yet.")
-            ttk.Label(sec.body, text=note, foreground="#555555", wraplength=330,
+            ttk.Label(sec.body, text=note, foreground="#555555", wraplength=self.px(330),
                       justify="left").pack(anchor="w")
             self.sections[item["key"]] = sec
         return outer
@@ -199,9 +211,29 @@ def parse_args(argv):
     return p.parse_args(argv)
 
 
+def enable_sharp_display():
+    """
+    Tell Windows this program draws at the screen's real resolution.
+    Without this, Windows draws the window at 96 dpi and stretches it on
+    high-resolution or scaled screens, which makes all text blurry.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # Windows 8.1 and later
+        except (AttributeError, OSError):
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception as e:
+        logger.info("could not turn on sharp display: %r", e)
+
+
 def main(is_root_process=True, argv=None):
     args = parse_args(argv if (argv is not None or is_root_process) else [])
     profile = load_profile(args.setup, args.config)
+    if is_root_process:
+        enable_sharp_display()  # must happen before the Tk window exists
     window = tk.Tk() if is_root_process else tk.Toplevel()
     MicroscopeWindow(window, profile)
     if is_root_process:
