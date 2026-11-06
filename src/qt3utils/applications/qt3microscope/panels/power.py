@@ -7,7 +7,9 @@ quadratic from the standalone qt3power. Reads run on the hub's DAQ worker,
 so they never overlap other DAQ jobs.
 """
 
+import json
 import logging
+import os
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -15,6 +17,34 @@ from tkinter import ttk
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, RED
 
 logger = logging.getLogger(__name__)
+
+BLUE = "#1d4fb0"
+MW_FONT = ("TkDefaultFont", 18, "bold")
+V_FONT = ("TkDefaultFont", 9)
+LARGE_SCALE = 8  # double-clicked readings are this many times bigger
+SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".qt3utils", "qt3microscope_power.json")
+
+
+def _big(font):
+    return (font[0], font[1] * LARGE_SCALE) + tuple(font[2:])
+
+
+def _load_large():
+    """Which readings were enlarged last time (remembered between sessions)."""
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+            return dict(json.load(f).get("large_readings", {}))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_large(large):
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"large_readings": large}, f, indent=2)
+    except OSError as e:
+        logger.warning("could not save power settings: %r", e)
 
 
 def volts_to_mw(volts, coeffs):
@@ -44,7 +74,7 @@ def read_voltages(device, channels, samples, v_range=(-10.0, 10.0)):
 
 
 class PowerPanel:
-    def __init__(self, section, hub, cfg, set_status=None):
+    def __init__(self, section, hub, cfg, set_status=None, on_layout=None):
         self.section = section
         self.worker = hub.worker("daq")
         self.device = cfg.get("device", "Dev1")
@@ -55,6 +85,8 @@ class PowerPanel:
         self.running = False
         self._waiting = False
         self._closing = False
+        self.on_layout = on_layout or (lambda: None)
+        self.large = _load_large()
         self._build(section.body)
         hub.on_close(self.close)
         if cfg.get("auto_start", True):
@@ -65,16 +97,33 @@ class PowerPanel:
         for det in self.detectors:
             row = ttk.Frame(body)
             row.pack(fill="x", pady=2)
-            ttk.Label(row, text=det.get("label", det["name"]),
-                      font=("TkDefaultFont", 10, "bold")).pack(side="left")
-            mw = tk.Label(row, text="--", font=("TkDefaultFont", 18, "bold"), fg="#1d4fb0")
-            mw.pack(side="left", padx=(10, 2))
-            ttk.Label(row, text="mW").pack(side="left")
-            volts = ttk.Label(row, text="", foreground=GRAY)
-            volts.pack(side="right")
-            self.rows.append((mw, volts))
+            name = ttk.Label(row, text=det.get("label", det["name"]), font=("TkDefaultFont", 10, "bold"))
+            name.pack(side="left")
+            mw = tk.Label(row, text="--", font=MW_FONT, fg=BLUE)
+            mw_unit = ttk.Label(row, text="mW")
+            volts = tk.Label(row, text="", font=V_FONT, fg=GRAY)
+            # Enlarged copies, each on its own line under the row (hidden until double-clicked).
+            big_mw_line = ttk.Frame(body)
+            big_mw = tk.Label(big_mw_line, text="--", font=_big(MW_FONT), fg=BLUE, padx=12)
+            big_mw.pack(side="left")
+            # Extra side padding: some systems draw big glyphs slightly wider than measured.
+            tk.Label(big_mw_line, text="mW", font=_big(("TkDefaultFont", 10)),
+                     padx=12).pack(side="left", anchor="s")
+            big_v_line = ttk.Frame(body)
+            big_v = tk.Label(big_v_line, text="", font=_big(V_FONT), fg="black", padx=12)
+            big_v.pack(side="left")
+            r = {"key": det["name"], "row": row, "name": name, "mw": mw, "mw_unit": mw_unit,
+                 "volts": volts, "big_mw_line": big_mw_line, "big_mw": big_mw,
+                 "big_v_line": big_v_line, "big_v": big_v}
+            for w in (mw, big_mw, *big_mw_line.winfo_children()):
+                w.bind("<Double-Button-1>", lambda _e, r=r: self.toggle_size(r, "mw"))
+            for w in (volts, big_v):
+                w.bind("<Double-Button-1>", lambda _e, r=r: self.toggle_size(r, "v"))
+            self.rows.append(r)
+            self._show_size(r)
         ttk.Label(body, foreground=GRAY, text=", ".join(
             f"{d['name']} on {self.device}/{d['channel']}" for d in self.detectors)).pack(anchor="w")
+        ttk.Label(body, foreground=GRAY, text="Double-click a reading to enlarge it.").pack(anchor="w")
 
         ctrl = ttk.Frame(body)
         ctrl.pack(fill="x", pady=(6, 0))
@@ -88,6 +137,30 @@ class PowerPanel:
         wrap = int(330 * max(1.0, body.winfo_fpixels("1i") / 96.0))
         ttk.Label(body, textvariable=self.msg_var, foreground=GRAY, wraplength=wrap,
                   justify="left").pack(anchor="w", pady=(4, 0))
+
+    # -- double-click to enlarge (for reading across the room while aligning)
+    def _is_large(self, r, kind):
+        return bool(self.large.get(f"{r['key']}_{kind}", False))
+
+    def _show_size(self, r):
+        for w in ("mw", "mw_unit", "volts", "big_mw_line", "big_v_line"):
+            r[w].pack_forget()
+        if self._is_large(r, "mw"):
+            r["big_mw_line"].pack(fill="x", after=r["row"])
+        else:
+            r["mw"].pack(side="left", padx=(10, 2))
+            r["mw_unit"].pack(side="left")
+        if self._is_large(r, "v"):
+            r["big_v_line"].pack(fill="x", after=r["big_mw_line"] if self._is_large(r, "mw") else r["row"])
+        else:
+            r["volts"].pack(side="right")
+
+    def toggle_size(self, r, kind):
+        key = f"{r['key']}_{kind}"
+        self.large[key] = not self.large.get(key, False)
+        self._show_size(r)
+        _save_large(self.large)
+        self.on_layout()
 
     def start(self):
         if not self.detectors:
@@ -129,11 +202,13 @@ class PowerPanel:
             self.set_status("error", RED)
             return
         powers = []
-        for det, (mw_lbl, v_lbl), v in zip(self.detectors, self.rows, result):
+        for det, r, v in zip(self.detectors, self.rows, result):
             p = volts_to_mw(v, det.get("v_to_mw", [1 / 7.0, 0.0]))
             powers.append(p)
-            mw_lbl.configure(text=f"{p:.4f}")
-            v_lbl.configure(text=f"{v:.4f} V")
+            for k in ("mw", "big_mw"):
+                r[k].configure(text=f"{p:.4f}")
+            for k in ("volts", "big_v"):
+                r[k].configure(text=f"{v:.4f} V")
         summary = " · ".join(f"{p:.4f}" for p in powers) + " mW"
         self.section.set_summary(summary)
         self.set_status(summary, GREEN)

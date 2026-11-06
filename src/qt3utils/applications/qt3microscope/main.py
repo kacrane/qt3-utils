@@ -151,6 +151,12 @@ class MicroscopeWindow:
 
     def _place_sash(self):
         width = self.px(self.profile.get("drawer_width", 390))
+        if hasattr(self, "drawer_scroll"):
+            # Widen the drawer if its contents need it (e.g. an enlarged reading).
+            self.window.update_idletasks()
+            need = (self.drawer_scroll.inner.winfo_reqwidth()
+                    + self.drawer_scroll.bar.winfo_reqwidth() + self.px(4))
+            width = max(width, need)
         try:
             self.hpane.sashpos(0, max(self.px(500), self.window.winfo_width() - width))
         except tk.TclError:
@@ -181,6 +187,7 @@ class MicroscopeWindow:
 
         scroll = ScrollableFrame(outer)
         scroll.pack(fill="both", expand=True)
+        self.drawer_scroll = scroll
         for item in self.profile.get("drawer", []):
             sec = CollapsibleSection(scroll.inner, item["label"], start_open=item.get("open", False))
             sec.pack(fill="x", padx=6, pady=3)
@@ -234,7 +241,8 @@ class MicroscopeWindow:
                 from qt3utils.applications.qt3microscope.panels.power import PowerPanel
                 self._clear_note("power")
                 self.power_panel = PowerPanel(self.sections["power"], self.hub, hw["power"],
-                                              set_status=self._chip_setter("power"))
+                                              set_status=self._chip_setter("power"),
+                                              on_layout=self._place_sash)
             except Exception as e:
                 self._panel_failed("power", e)
 
