@@ -119,7 +119,10 @@ class FlipperMountController:
             raise FlipperMountError("Not connected")
         _write_do_levels(self._writer, self._n, levels)
 
-    def connect(self) -> None:
+    def connect(self, initial_levels: Optional[Sequence[bool]] = None) -> None:
+        """Open the DO task and write ``initial_levels`` (default: every line high/UP)."""
+        if initial_levels is not None and len(initial_levels) != self._n:
+            raise ValueError(f"expected {self._n} initial levels, got {len(initial_levels)}")
         with self._lock:
             if self._task is not None:
                 return
@@ -128,7 +131,7 @@ class FlipperMountController:
                 task = nidaqmx.Task()
                 _add_do_channels(task, self._resolved_channels)
                 writer = _make_do_writer(task, self._n)
-                levels = [True] * self._n
+                levels = [True] * self._n if initial_levels is None else [bool(x) for x in initial_levels]
                 _write_do_levels(writer, self._n, levels)
                 self._task = task
                 self._writer = writer

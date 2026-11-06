@@ -1,16 +1,23 @@
 """
 Flip mirrors panel: TTL flipper mounts on NI-DAQ digital outputs.
 
-Same behaviour as the standalone qt3mirror app, placed in a drawer section:
-Connect (which drives every line UP, as in qt3mirror), Initialize (sync to
-UP), All up / All down, a Toggle per mirror and the preset buttons. Mirror
+Same controls as the standalone qt3mirror app, placed in a drawer section:
+Connect, Initialize (sync to UP), All up / All down, a Toggle per mirror
+and the preset buttons.
+
+Unlike qt3mirror, the panel connects by itself when the window opens and
+puts every line back to the level it had when the window last closed
+(remembered in ~/.qt3utils/qt3microscope_flippers.json). With no saved
+state yet, it sets every line UP, as qt3mirror's Connect does. Mirror
 names, lines and presets come from the profile, in qt3mirror's YAML layout.
 
 Writes run on the hub's DAQ worker. The 0.5 s settle time after each
 command is waited out on the window side, so it doesn't hold up the DAQ.
 """
 
+import json
 import logging
+import os
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -20,6 +27,30 @@ from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
 logger = logging.getLogger(__name__)
 
 SETTLE_MS_AFTER_COMMAND = 500  # as qt3mirror
+STATE_PATH = os.path.join(os.path.expanduser("~"), ".qt3utils", "qt3microscope_flippers.json")
+
+
+def load_state(n):
+    """Last line levels and action, or (None, "") if there is no usable saved state."""
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        levels = [bool(x) for x in data["levels"]]
+        if len(levels) == n:
+            return levels, str(data.get("last_action", ""))
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None, ""
+
+
+def save_state(levels, last_action):
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+        with open(STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump({"levels": list(levels), "last_action": last_action,
+                       "saved": time.strftime("%Y-%m-%d %H:%M:%S")}, f, indent=2)
+    except OSError as e:
+        logger.warning("could not save flipper state: %r", e)
 
 
 class FlippersPanel:
@@ -36,6 +67,8 @@ class FlippersPanel:
         self._build(section.body)
         self._update_states()
         hub.on_close(self.close)
+        if cfg.get("auto_connect", True):
+            self.connect()
 
     # -- GUI ---------------------------------------------------------------
     def _build(self, body):
@@ -76,7 +109,7 @@ class FlippersPanel:
         pf.columnconfigure(1, weight=1)
 
         wrap = int(330 * max(1.0, body.winfo_fpixels("1i") / 96.0))
-        self.msg_var = tk.StringVar(value="Not connected. Connect sets every mirror UP (as in qt3mirror).")
+        self.msg_var = tk.StringVar(value="Not connected.")
         ttk.Label(body, textvariable=self.msg_var, foreground=GRAY, wraplength=wrap,
                   justify="left").pack(anchor="w", pady=(6, 0))
         self._idle_bg = self.state_lbls[0].cget("bg") if self.state_lbls else None
@@ -111,14 +144,19 @@ class FlippersPanel:
     def connect(self):
         if self._busy or self._connected():
             return
+        levels, last_action = load_state(len(self.cfg.flipper_lines))
+
         def work():
             from qt3utils.hardware.nidaq.digitaloutputs import FlipperMountController  # needs nidaqmx
             ctrl = FlipperMountController(self.cfg.device, line_channels=self.cfg.flipper_lines)
-            ctrl.connect()
+            ctrl.connect(initial_levels=levels)
             return ctrl
 
-        self._last_action = "all UP"
-        self._run("connect", work, on_ok=lambda ctrl: setattr(self, "controller", ctrl))
+        if levels is None:
+            self._last_action, label = "all UP", "Connect (no saved state: all UP)"
+        else:
+            self._last_action, label = last_action or "last state", "Connect (restored last state)"
+        self._run(label, work, on_ok=lambda ctrl: setattr(self, "controller", ctrl))
 
     def disconnect(self):
         if self.controller is not None:
@@ -162,6 +200,7 @@ class FlippersPanel:
         self._busy = False
         if ok:
             self.msg_var.set(f"{time.strftime('%H:%M:%S')}  {label}. Connected: {self.controller.channel_string}")
+            save_state(self.controller.levels, self._last_action)
         else:
             self._last_action = ""
             self.msg_var.set(f"{time.strftime('%H:%M:%S')}  {label} failed: {result}")
