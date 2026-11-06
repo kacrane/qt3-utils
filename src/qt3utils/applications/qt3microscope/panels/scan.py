@@ -322,10 +322,11 @@ class ImageScanTab(_PlotTab):
         self.status = tk.StringVar(value="Scans are centred on the current X/Y position.")
         ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
                   wraplength=int(230 * scale)).grid(row=r + 9, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self.range_e.bind("<KeyRelease>", lambda e: self.redraw() if self.shown is None else None)
         self._buttons()
         self.redraw()
         if self.fig is not None:  # margins are in pixels: recompute when the tab resizes
-            self.canvas.mpl_connect("resize_event", lambda e: self.redraw() if self.shown else None)
+            self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
 
     def _buttons(self):
         scan = self.shown
@@ -487,9 +488,21 @@ class ImageScanTab(_PlotTab):
         ax.tick_params(labelsize=FONT)
         scan = self.shown
         if scan is None:
+            # Empty square frame the size of the scan Start would take now.
+            try:
+                rng = float(self.range_e.get())
+            except (AttributeError, ValueError):
+                rng = float(self.cfg.get("range", 80))
+            cx = centred_range(self.engine.position("x") or 0.0, rng, *self.engine.limits("x"))
+            cy = centred_range(self.engine.position("y") or 0.0, rng, *self.engine.limits("y"))
+            ax.set_xlim(cx[0], cx[1])
+            ax.set_ylim(cy[0], cy[1])
+            ax.set_aspect("equal")
+            ax.grid(alpha=0.3)
             ax.set_xlabel("x position (µm)", fontsize=FONT)
             ax.set_ylabel("y position (µm)", fontsize=FONT)
             ax.text(0.5, 0.5, "Start a scan", ha="center", va="center", transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
+            self._image_at_left(ax).set_visible(False)  # keeps the same place as a real scan
             self.canvas.draw_idle()
             return
         pw = scan["range"] / scan["n_pixels"]
