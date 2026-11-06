@@ -12,6 +12,7 @@ so the power panel and later the scans can use the DAQ in between.
 import datetime
 import logging
 import os
+import sys
 import time
 import tkinter as tk
 from tkinter import filedialog, ttk
@@ -104,6 +105,13 @@ class ScopePanel:
             self.fig = None
             ttk.Label(self.plot_frame, text=f"No plot: {e}", foreground=RED).pack(anchor="w")
             return
+        # Matplotlib reads IPython.version_info when it makes a canvas. The laser
+        # panel loads qick on another thread, which imports IPython, so IPython
+        # can be half-imported at this moment and lack version_info. Matplotlib
+        # only needs it to skip an old-IPython fix, so give it a new version.
+        ip = sys.modules.get("IPython")
+        if ip is not None and not hasattr(ip, "version_info"):
+            ip.version_info = (99, 0, 0)
         dpi = 96 * self.scale
         self.fig = Figure(figsize=(8, 1.9), dpi=dpi)
         self.ax = self.fig.add_subplot(111)

@@ -222,6 +222,16 @@ class MicroscopeWindow:
     def _attach_panels(self):
         """Put a working panel in each drawer section the profile has hardware for."""
         hw = self.profile.get("hardware", {}) or {}
+        # Scope first: it makes a matplotlib canvas before the laser panel starts
+        # loading qick (and IPython) on another thread.
+        if "scope" in self.sections and "scope" in hw:
+            try:
+                from qt3utils.applications.qt3microscope.panels.scope import ScopePanel
+                self._clear_note("scope")
+                self.scope_panel = ScopePanel(self.sections["scope"], self.hub, hw["scope"],
+                                              set_status=self._chip_setter("counts"), scale=self.scale)
+            except Exception as e:
+                self._panel_failed("scope", e)
         if "laser" in self.sections and "qickdawg" in hw:
             try:
                 from qt3utils.applications.qt3microscope.panels.laser import LaserPanel
@@ -237,14 +247,6 @@ class MicroscopeWindow:
                                               set_status=self._chip_setter("laser"))
             except Exception as e:
                 self._panel_failed("laser", e)
-        if "scope" in self.sections and "scope" in hw:
-            try:
-                from qt3utils.applications.qt3microscope.panels.scope import ScopePanel
-                self._clear_note("scope")
-                self.scope_panel = ScopePanel(self.sections["scope"], self.hub, hw["scope"],
-                                              set_status=self._chip_setter("counts"), scale=self.scale)
-            except Exception as e:
-                self._panel_failed("scope", e)
         if "power" in self.sections and "power" in hw:
             try:
                 from qt3utils.applications.qt3microscope.panels.power import PowerPanel
