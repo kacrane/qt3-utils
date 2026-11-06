@@ -67,6 +67,9 @@ class ScopePanel:
         self.timestamp = datetime.datetime.now()
         self.last_save_directory = None
         self._last_draw = 0.0
+        self._after_stop = None
+        # Set by the window: returns a reason (str) while a scan owns the counter.
+        self.blocked = lambda: ""
         self._build(section.body)
         self._enable_buttons()
         hub.on_close(self.close)
@@ -184,6 +187,9 @@ class ScopePanel:
     def start(self):
         if self.running or self._job_out:
             return
+        if self.blocked():
+            self.msg_var.set(self.blocked())
+            return
         if not self.data_x:  # sample time and raw counts only change after Reset
             try:
                 st = float(self.sample_time_entry.get())
@@ -201,6 +207,18 @@ class ScopePanel:
         self.msg_var.set("Starting...")
         self._job_out = True
         self.worker.submit("scope start", self._daq_start, self._started)
+
+    def release_counter(self, callback):
+        """Stop sampling (if running) so another tool can use the counter, then call callback(was_running)."""
+        if self.running or self._job_out:
+            was = self.running
+            self.running = False
+            self.msg_var.set("Paused for a scan")
+            self._after_stop = lambda: callback(was)
+            if not self._job_out:  # between chunks: nothing will call _next_chunk
+                self._next_chunk()
+        else:
+            callback(False)
 
     def pause(self):
         if not self.running:
@@ -307,6 +325,9 @@ class ScopePanel:
 
     def _stopped(self, ok, result):
         self._job_out = False
+        if self._after_stop is not None:
+            cb, self._after_stop = self._after_stop, None
+            self.section.after(0, cb)
         self.total_measurement_time += time.time() - getattr(self, "_run_start", time.time())
         if self._closing:
             return

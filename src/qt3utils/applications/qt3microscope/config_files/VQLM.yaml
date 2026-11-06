@@ -11,13 +11,13 @@ QT3MICROSCOPE:
     - {key: laser, label: "Laser"}
     - {key: power, label: "P obj"}
     - {key: counts, label: "SPCM"}
-    - {key: ple, label: "PLE laser"}
     - {key: piezo, label: "Piezo"}
     - {key: flippers, label: "Flippers"}
     - {key: daq, label: "DAQ"}
 
   # Measurement tabs in the middle.
-  measurements: ["Image scan", "Line scan", "PLE"]
+  # No PLE tab on the VQLM (Kendall, 2026-11-06).
+  measurements: ["Image scan", "Line scan"]
 
   # Strip along the bottom. VQLM micrometers are manual, so no XY box.
   bottom:
@@ -30,7 +30,7 @@ QT3MICROSCOPE:
     - {key: flippers, label: "Flip mirrors", open: true}
     - {key: power, label: "Power at objective", open: true}
     - {key: stage, label: "Stage (piezos)", open: false}
-    - {key: pulseblaster, label: "Pulse Blaster", open: false, hidden: true, note: "qt3pb goes here in step 6."}
+    # No Pulse Blaster section on the VQLM (Kendall, 2026-11-06).
 
   # Hardware settings. A drawer section gets a working panel when its
   # hardware is listed here.
@@ -72,12 +72,21 @@ QT3MICROSCOPE:
           configure: {device_name: Dev1, write_channel: ao1, read_channel: , move_settle_time: 0.0,
                       scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
                       min_position: -40.0, max_position: 40.0, invert_axis: true}
+        # Z is not inverted: qdlscan's direction (qdlmove had it inverted).
         - label: Z
           import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
           class_name: NidaqPositionController
           configure: {device_name: Dev1, write_channel: ao2, read_channel: , move_settle_time: 0.0,
                       scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
-                      min_position: -40.0, max_position: 40.0, invert_axis: true}
+                      min_position: -40.0, max_position: 40.0, invert_axis: false}
+    # Image scan and line scan tabs (formerly qdlscan). They use the stage
+    # piezos above and the scope's SPCM counter; the scope pauses during a
+    # scan and resumes after. range/range_xy/range_z in µm, time in s/row
+    # (image) or s/line (line scan).
+    scan:
+      inter_scan_settle_time: 0.01
+      image: {range: 80, pixels: 80, time: 1}
+      line: {range_xy: 3, range_z: 20, pixels: 50, time: 1}
     # Flip mirrors (same layout as the VQLM qt3mirror_base.yaml).
     flippers:
       device: Dev1

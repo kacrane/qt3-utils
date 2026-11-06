@@ -143,11 +143,13 @@ class MicroscopeWindow:
         self._build_bottom_strip(left).pack(side="bottom", fill="x")
 
         self.tabs = ttk.Notebook(left)
+        self.tab_pages = {}
         for name in self.profile.get("measurements", ["Image scan"]):
-            page = ttk.Frame(self.tabs, padding=20)
-            ttk.Label(page, text=f"{name}\n\nNot connected yet: the scan and PLE tabs come in later steps.",
-                      foreground="#555555", justify="left").pack(anchor="nw")
+            page = ttk.Frame(self.tabs)
+            ttk.Label(page, text=f"{name}\n\nNot connected yet: this tab comes in a later step.",
+                      foreground="#555555", justify="left").pack(anchor="nw", padx=20, pady=20)
             self.tabs.add(page, text=f"  {name}  ")
+            self.tab_pages[name] = page
         self.tabs.pack(side="top", fill="both", expand=True)
 
         self.drawer = self._build_drawer(self.hpane)
@@ -288,6 +290,43 @@ class MicroscopeWindow:
                     setattr(self, f"{key}_panel", panel)
                 except Exception as e:
                     self._panel_failed(key, e)
+        self._attach_scan_tabs(hw)
+
+    def _attach_scan_tabs(self, hw):
+        """Image scan and Line scan tabs (formerly qdlscan): need the stage piezos and the scope counter."""
+        wanted = [n for n in ("Image scan", "Line scan") if n in self.tab_pages]
+        if not wanted or "scan" not in hw:
+            return
+        stage = getattr(self, "stage_panel", None)
+        try:
+            if stage is None or len(stage.axes) < 3:
+                raise RuntimeError("the scan tabs need the Stage (piezos) section with X, Y and Z axes")
+            from qt3utils.applications.qt3microscope.panels.scan import ImageScanTab, LineScanTab, ScanEngine
+            self.scan_engine = ScanEngine(self.hub, stage, getattr(self, "scope_panel", None),
+                                          hw["scan"], hw.get("scope"))
+        except Exception as e:
+            logger.exception("scan tabs failed to start")
+            for name in wanted:
+                self._tab_failed(name, e)
+            return
+        for name, cls, key in (("Image scan", ImageScanTab, "image"), ("Line scan", LineScanTab, "line")):
+            if name not in self.tab_pages:
+                continue
+            try:
+                page = self.tab_pages[name]
+                for child in page.winfo_children():
+                    child.destroy()
+                setattr(self, f"{key}_tab", cls(page, self.scan_engine, hw["scan"].get(key), scale=self.scale))
+            except Exception as e:
+                logger.exception("%s tab failed to start", name)
+                self._tab_failed(name, e)
+
+    def _tab_failed(self, name, err):
+        page = self.tab_pages[name]
+        for child in page.winfo_children():
+            child.destroy()
+        ttk.Label(page, text=f"Could not start this tab: {err}", foreground="#c62828",
+                  wraplength=self.px(600), justify="left").pack(anchor="nw", padx=20, pady=20)
 
     def _panel_failed(self, key, err):
         logger.exception("%s panel failed to start", key)

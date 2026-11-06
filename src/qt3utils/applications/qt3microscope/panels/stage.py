@@ -57,6 +57,9 @@ class StagePanel:
         self._busy = [False] * len(self.axes)
         self._pending = [0.0] * len(self.axes)
         self._closing = False
+        # Set by the window: returns a reason (str) while another tool (a scan)
+        # owns the piezos, or "" when the stage is free to move.
+        self.blocked = lambda: ""
         self._build(section.body)
         self.window = section.winfo_toplevel()
         self._bindings = []
@@ -138,6 +141,9 @@ class StagePanel:
     def _on_key(self, event):
         if self._closing or not self.step_var.get():
             return
+        if self.blocked():
+            self.msg_var.set(self.blocked())
+            return
         if event.widget.winfo_class() in TYPING_CLASSES:
             return  # typing a number, not stepping
         if not self.section.is_open:
@@ -160,6 +166,9 @@ class StagePanel:
 
     # -- moves --------------------------------------------------------------
     def set_axis(self, i):
+        if self.blocked():
+            self.msg_var.set(self.blocked())
+            return
         try:
             target = float(self.rows[i]["set"].get())
         except ValueError:
@@ -184,10 +193,27 @@ class StagePanel:
                            lambda: self._daq_move(i, target),
                            lambda ok, res: self._moved(i, target, ok, res))
 
-    def _daq_move(self, i, target):
+    def positioner(self, i):
+        """The shared positioner for axis i (built on first use). Call on the DAQ worker."""
         if self.positioners[i] is None:
             self.positioners[i] = make_positioner(self.axes[i])
-        p = self.positioners[i]
+        return self.positioners[i]
+
+    def axis_limits(self, i):
+        c = self.axes[i].get("configure") or {}
+        return float(c.get("min_position", -40.0)), float(c.get("max_position", 40.0))
+
+    def refresh_positions(self):
+        """Show the positions other tools (scans, go-to) left the piezos at."""
+        for i, p in enumerate(self.positioners):
+            if p is not None and hasattr(p, "get_last_commanded_position"):
+                pos = p.get_last_commanded_position()
+                if pos is not None:
+                    self.positions[i] = pos
+        self._show_positions()
+
+    def _daq_move(self, i, target):
+        p = self.positioner(i)
         lo, hi = getattr(p, "min_position", None), getattr(p, "max_position", None)
         if lo is not None and hi is not None and not lo <= target <= hi:
             raise ValueError(f"{target:g} µm is outside {lo:g} to {hi:g} µm")
