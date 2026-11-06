@@ -30,6 +30,18 @@ SETTLE_MS_AFTER_COMMAND = 500  # as qt3mirror
 STATE_PATH = os.path.join(os.path.expanduser("~"), ".qt3utils", "qt3microscope_flippers.json")
 
 
+def daq_label(line):
+    """Name a DO line the way the USB-6343 front panel does: port1/lineN -> PFIN, port2/lineN -> PFI(8+N)."""
+    spec = line.strip().strip("/").split("/")
+    if len(spec) >= 2 and spec[-2] in ("port1", "port2") and spec[-1].startswith("line"):
+        try:
+            n = int(spec[-1][4:])
+        except ValueError:
+            return line
+        return f"PFI{n + (8 if spec[-2] == 'port2' else 0)}"
+    return "/".join(spec[-2:])  # port0 lines are on the D connector; keep portX/lineY
+
+
 def load_state(n):
     """Last line levels and action, or (None, "") if there is no usable saved state."""
     try:
@@ -90,6 +102,8 @@ class FlippersPanel:
         self.state_lbls, self.toggle_btns = [], []
         for i, name in enumerate(self.cfg.flipper_names):
             ttk.Label(grid, text=name, font=("TkDefaultFont", 10, "bold")).grid(row=i + 1, column=0, sticky="w")
+            ttk.Label(grid, text=daq_label(self.cfg.flipper_lines[i]), foreground=GRAY).grid(
+                row=i + 1, column=3, sticky="w", padx=(6, 0))
             lbl = tk.Label(grid, text="—", width=6)
             lbl.grid(row=i + 1, column=1, padx=6, pady=1)
             btn = ttk.Button(grid, text="Toggle", width=7, command=lambda i=i, n=name: self._do(f"Toggle {n}", "toggle", i))
@@ -199,7 +213,7 @@ class FlippersPanel:
             return
         self._busy = False
         if ok:
-            self.msg_var.set(f"{time.strftime('%H:%M:%S')}  {label}. Connected: {self.controller.channel_string}")
+            self.msg_var.set(f"{time.strftime('%H:%M:%S')}  {label}")
             save_state(self.controller.levels, self._last_action)
         else:
             self._last_action = ""
