@@ -39,6 +39,10 @@ QT3MICROSCOPE:
     qickdawg: {host: 192.168.3.1, port: 8888, server_name: myqick, timeout_s: 10, health_check_s: 30}
     laser: {laser_gate_pmod: 0, adc_channel: 0, edge_counting: true,
             high_threshold: 8000, low_threshold: 500, relax_delay_tns: 50}
+    # Scope strip: SPCM on a DAQ counter (formerly qdlscope; same values
+    # as its qdlscope_base.yaml). sample_time is the starting time per sample.
+    scope: {daq_name: Dev1, signal_terminal: PFI0, signal_counter: ctr2, clock_rate: 100000,
+            clock_terminal: "", read_write_timeout: 10, sample_time: 0.01}
     # Photodetector(s) on the NI DAQ. v_to_mw is a polynomial in volts,
     # highest power first; this is the VQLM qt3power quadratic.
     power:

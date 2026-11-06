@@ -10,6 +10,7 @@ on the Tk thread through ``on_done(ok, result)``.
 import logging
 import queue
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,12 @@ class DeviceWorker:
     def pending(self):
         return self._jobs.qsize()
 
+    def wait_idle(self, timeout):
+        """Wait (up to timeout seconds) until every submitted job has finished."""
+        end = time.time() + timeout
+        while self._jobs.unfinished_tasks and time.time() < end:
+            time.sleep(0.02)
+
     def _loop(self):
         while True:
             job, fn, on_done, quiet = self._jobs.get()
@@ -39,6 +46,8 @@ class DeviceWorker:
             except Exception as e:  # report every failure back to the panel
                 logger.warning("%s: %s failed: %r", self.name, job, e, exc_info=not quiet)
                 self._results.put((on_done, False, e))
+            finally:
+                self._jobs.task_done()
 
 
 class Hub:
@@ -69,6 +78,9 @@ class Hub:
                 fn()
             except Exception as e:
                 logger.warning("close step failed: %r", e)
+        # Let close-time jobs (e.g. stopping the DAQ counter) finish before exit.
+        for w in self._workers.values():
+            w.wait_idle(3.0)
 
     def _poll(self):
         try:

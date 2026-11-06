@@ -1,3 +1,4 @@
+# Formerly qdlscope (QDLSCOPE config in qdlutils.applications.qdlscope).
 # qt3scope with Single Quantum WebSQ (SNSPD over lab LAN, Option B).
 QT3SCOPE:
   ApplicationController:

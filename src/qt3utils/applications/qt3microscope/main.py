@@ -3,7 +3,8 @@ QT3 Microscope: one window for the whole microscope.
 
 A status strip along the top, measurement tabs in the middle, a scope
 strip along the bottom and a folding instrument drawer on the right.
-Instruments are added step by step (plan step 2: laser and power). A
+Instruments are added step by step (step 2: laser and power; step 3: the
+scope strip, formerly qdlscope). A
 drawer section without a panel yet says which later step fills it in.
 All hardware calls go through the instrument hub (hub.py): one worker
 thread per device, so a slow device never freezes the window.
@@ -236,6 +237,14 @@ class MicroscopeWindow:
                                               set_status=self._chip_setter("laser"))
             except Exception as e:
                 self._panel_failed("laser", e)
+        if "scope" in self.sections and "scope" in hw:
+            try:
+                from qt3utils.applications.qt3microscope.panels.scope import ScopePanel
+                self._clear_note("scope")
+                self.scope_panel = ScopePanel(self.sections["scope"], self.hub, hw["scope"],
+                                              set_status=self._chip_setter("counts"), scale=self.scale)
+            except Exception as e:
+                self._panel_failed("scope", e)
         if "power" in self.sections and "power" in hw:
             try:
                 from qt3utils.applications.qt3microscope.panels.power import PowerPanel

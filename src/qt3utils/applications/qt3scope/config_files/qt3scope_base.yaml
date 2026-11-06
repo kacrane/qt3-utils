@@ -1,3 +1,4 @@
+# Formerly qdlscope (QDLSCOPE config in qdlutils.applications.qdlscope).
 QT3SCOPE:
   ApplicationController:
     import_path : qt3utils.applications.qt3scope.application_controller
