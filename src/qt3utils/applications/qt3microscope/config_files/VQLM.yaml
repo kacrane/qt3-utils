@@ -1,5 +1,5 @@
 # QT3 Microscope setup profile for the VQLM.
-# Lists what the window shows. Hardware settings are added step by step.
+# Lists what the window shows and the hardware settings for each panel.
 QT3MICROSCOPE:
   setup: VQLM
   title: "QT3 Microscope — VQLM"
@@ -26,8 +26,25 @@ QT3MICROSCOPE:
 
   # Drawer sections, top to bottom. open: starts unfolded.
   drawer:
-    - {key: laser, label: "Laser (QICK-DAWG)", open: true, note: "qt3laser goes here in step 2."}
-    - {key: power, label: "Power at objective", open: true, note: "qt3power goes here in step 2."}
-    - {key: stage, label: "Stage", open: false, note: "qdlmove goes here in step 4."}
+    - {key: laser, label: "Laser (QICK-DAWG)", open: true}
     - {key: flippers, label: "Flip mirrors", open: true, note: "qt3mirror goes here in step 4."}
+    - {key: power, label: "Power at objective", open: true}
+    - {key: stage, label: "Stage", open: false, note: "qdlmove goes here in step 4."}
     - {key: pulseblaster, label: "Pulse Blaster", open: false, note: "qt3pb goes here in step 6."}
+
+  # Hardware settings. A drawer section gets a working panel when its
+  # hardware is listed here.
+  hardware:
+    # QICK-DAWG board that switches the laser (same values as qt3laser).
+    qickdawg: {host: 192.168.3.1, port: 8888, server_name: myqick, timeout_s: 10, health_check_s: 30}
+    laser: {laser_gate_pmod: 0, adc_channel: 0, edge_counting: true,
+            high_threshold: 8000, low_threshold: 500, relax_delay_tns: 50}
+    # Photodetector(s) on the NI DAQ. v_to_mw is a polynomial in volts,
+    # highest power first; this is the VQLM qt3power quadratic.
+    power:
+      device: Dev1
+      interval_ms: 200
+      samples: 10
+      auto_start: true
+      detectors:
+        - {name: PDA100A2, channel: ai4, label: "Excitation", v_to_mw: [7.5461e-4, 0.64023, -8.3511e-3]}

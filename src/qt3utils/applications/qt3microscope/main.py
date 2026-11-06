@@ -1,10 +1,12 @@
 """
 QT3 Microscope: one window for the whole microscope.
 
-Step 1 of the single-window plan. This is the empty shell: a status strip
-along the top, measurement tabs in the middle, a scope strip along the
-bottom and a folding instrument drawer on the right. Nothing talks to
-hardware yet; each section says which later step fills it in.
+A status strip along the top, measurement tabs in the middle, a scope
+strip along the bottom and a folding instrument drawer on the right.
+Instruments are added step by step (plan step 2: laser and power). A
+drawer section without a panel yet says which later step fills it in.
+All hardware calls go through the instrument hub (hub.py): one worker
+thread per device, so a slow device never freezes the window.
 
 One program and one branch serve both microscopes. The setup profile
 (config_files/VQLM.yaml or TQLM.yaml) decides which instruments appear,
@@ -24,11 +26,13 @@ from tkinter import ttk
 
 import yaml
 
-try:
-    from .widgets import CollapsibleSection, ScrollableFrame, StatusChip, XYMicrometerBox
-except ImportError:  # run as a plain script
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from widgets import CollapsibleSection, ScrollableFrame, StatusChip, XYMicrometerBox
+if __package__ in (None, ""):  # run as a plain script: put .../src on the path
+    _here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.abspath(os.path.join(_here, "..", "..", "..")))
+
+from qt3utils.applications.qt3microscope.hub import Hub
+from qt3utils.applications.qt3microscope.widgets import (CollapsibleSection, ScrollableFrame,
+                                                         StatusChip, XYMicrometerBox)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig()
@@ -86,6 +90,9 @@ class MicroscopeWindow:
         self._build_status_strip()
         self._build_body()
         self._build_footer()
+        self.hub = Hub(window)
+        self._attach_panels()
+        window.protocol("WM_DELETE_WINDOW", self.quit)
         logger.info("QT3 Microscope opened with setup %s", self.setup)
 
     def px(self, value):
@@ -96,7 +103,7 @@ class MicroscopeWindow:
     def _build_menu(self):
         bar = tk.Menu(self.window)
         file_menu = tk.Menu(bar, tearoff=0)
-        file_menu.add_command(label="Quit", command=self.window.destroy)
+        file_menu.add_command(label="Quit", command=self.quit)
         bar.add_cascade(label="File", menu=file_menu)
 
         view = tk.Menu(bar, tearoff=0)
@@ -194,6 +201,52 @@ class MicroscopeWindow:
             self.window.after(20, self._place_sash)
         else:
             self.hpane.forget(self.drawer)
+
+    # ----- instruments -----------------------------------------------------
+    def _chip_setter(self, key):
+        chip = self.chips.get(key)
+        return chip.set if chip else None
+
+    def _clear_note(self, key):
+        for child in self.sections[key].body.winfo_children():
+            child.destroy()
+
+    def _attach_panels(self):
+        """Put a working panel in each drawer section the profile has hardware for."""
+        hw = self.profile.get("hardware", {}) or {}
+        if "laser" in self.sections and "qickdawg" in hw:
+            try:
+                from qt3utils.applications.qt3microscope.panels.laser import LaserPanel
+                from qt3utils.hardware.qickdawg.client import QickDawgClient
+                q = hw["qickdawg"]
+                client = QickDawgClient(host=q.get("host", "192.168.3.1"), port=q.get("port", 8888),
+                                        server_name=q.get("server_name", "myqick"),
+                                        timeout_s=q.get("timeout_s", 10),
+                                        laser_settings=hw.get("laser"))
+                self._clear_note("laser")
+                self.laser_panel = LaserPanel(self.sections["laser"], self.hub, client,
+                                              health_check_s=q.get("health_check_s", 30),
+                                              set_status=self._chip_setter("laser"))
+            except Exception as e:
+                self._panel_failed("laser", e)
+        if "power" in self.sections and "power" in hw:
+            try:
+                from qt3utils.applications.qt3microscope.panels.power import PowerPanel
+                self._clear_note("power")
+                self.power_panel = PowerPanel(self.sections["power"], self.hub, hw["power"],
+                                              set_status=self._chip_setter("power"))
+            except Exception as e:
+                self._panel_failed("power", e)
+
+    def _panel_failed(self, key, err):
+        logger.exception("%s panel failed to start", key)
+        self._clear_note(key)
+        ttk.Label(self.sections[key].body, text=f"Could not start this panel: {err}",
+                  foreground="#c62828", wraplength=self.px(330), justify="left").pack(anchor="w")
+
+    def quit(self):
+        self.hub.close()
+        self.window.destroy()
 
     # ----- bottom ----------------------------------------------------------
     def _build_footer(self):
