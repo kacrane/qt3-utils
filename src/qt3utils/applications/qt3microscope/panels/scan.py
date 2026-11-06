@@ -34,7 +34,8 @@ from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
 logger = logging.getLogger(__name__)
 
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
-DEFAULT_COLOR_MAP = "gray"  # as qdlscan
+DEFAULT_COLOR_MAP = "gray"  # black and white, as qdlscan
+FONT = 9  # plot text size, same as the scope
 
 
 def _qt3utils_version():
@@ -223,8 +224,16 @@ class _PlotTab:
         try:
             from matplotlib.figure import Figure
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-            self.fig = Figure(figsize=(6, 5), dpi=96 * scale)
+            # Same text size as the scope plot. The figure follows the size of
+            # the tab (constrained layout keeps the labels inside), so ask Tk
+            # for a small canvas and let it grow, rather than asking for more
+            # room than the tab has and getting clipped.
+            try:
+                self.fig = Figure(figsize=(4, 3), dpi=96 * scale, layout="constrained")
+            except TypeError:  # older matplotlib
+                self.fig = Figure(figsize=(4, 3), dpi=96 * scale, constrained_layout=True)
             self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot)
+            self.canvas.get_tk_widget().configure(width=int(300 * scale), height=int(220 * scale))
             tb = NavigationToolbar2Tk(self.canvas, self.plot, pack_toolbar=False)
             tb.update()
             tb.pack(side="bottom", fill="x")
@@ -315,6 +324,8 @@ class ImageScanTab(_PlotTab):
                   wraplength=int(230 * scale)).grid(row=r + 9, column=0, columnspan=2, sticky="w", pady=(10, 0))
         self._buttons()
         self.redraw()
+        if self.fig is not None:  # margins are in pixels: recompute when the tab resizes
+            self.canvas.mpl_connect("resize_event", lambda e: self.redraw() if self.shown else None)
 
     def _buttons(self):
         scan = self.shown
@@ -473,11 +484,12 @@ class ImageScanTab(_PlotTab):
             return
         self.fig.clear()
         ax = self.fig.add_subplot(111)
+        ax.tick_params(labelsize=FONT)
         scan = self.shown
         if scan is None:
-            ax.set_xlabel("x position (µm)")
-            ax.set_ylabel("y position (µm)")
-            ax.text(0.5, 0.5, "Start a scan", ha="center", va="center", transform=ax.transAxes, color="#888888")
+            ax.set_xlabel("x position (µm)", fontsize=FONT)
+            ax.set_ylabel("y position (µm)", fontsize=FONT)
+            ax.text(0.5, 0.5, "Start a scan", ha="center", va="center", transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
             self.canvas.draw_idle()
             return
         pw = scan["range"] / scan["n_pixels"]
@@ -488,15 +500,35 @@ class ImageScanTab(_PlotTab):
         if self.norm[0] is not None:
             from matplotlib.colors import Normalize
             img.set_norm(Normalize(vmin=self.norm[0], vmax=self.norm[1]))
-        cbar = self.fig.colorbar(img, ax=ax)
-        cbar.ax.set_ylabel("Intensity (cts/s)", rotation=270, labelpad=15)
-        ax.set_xlabel(f"{scan['axis_1']} position (µm)")
-        ax.set_ylabel(f"{scan['axis_2']} position (µm)")
+        cbar = self.fig.colorbar(img, cax=self._image_at_left(ax))
+        cbar.ax.set_ylabel("Intensity (cts/s)", rotation=270, labelpad=12, fontsize=FONT)
+        cbar.ax.tick_params(labelsize=FONT)
+        ax.set_xlabel(f"{scan['axis_1']} position (µm)", fontsize=FONT)
+        ax.set_ylabel(f"{scan['axis_2']} position (µm)", fontsize=FONT)
         ax.grid(alpha=0.3)
         x, y = self.engine.position("x"), self.engine.position("y")
         if x is not None and y is not None:
             ax.plot(x, y, "o", fillstyle="none", markeredgecolor="#1864ab", markeredgewidth=2)
         self.canvas.draw_idle()
+
+    def _image_at_left(self, ax):
+        """Put the square image at the left of the tab with the colour bar
+        right beside it (constrained layout would centre it). Returns the
+        colour bar's axes. Margins are in points so the labels fit at any
+        size and screen scaling."""
+        try:
+            self.fig.set_layout_engine("none")
+        except AttributeError:  # older matplotlib
+            self.fig.set_constrained_layout(False)
+        pt = self.fig.dpi / 72.0
+        w = self.fig.get_figwidth() * self.fig.dpi
+        h = self.fig.get_figheight() * self.fig.dpi
+        left, bottom, top = 48 * pt, 36 * pt, 10 * pt
+        pad, bar, bar_labels = 8 * pt, 10 * pt, 58 * pt
+        side = max(10.0, min(h - bottom - top, w - left - pad - bar - bar_labels))
+        ax.set_anchor("SW")
+        ax.set_position([left / w, bottom / h, side / w, side / h])
+        return self.fig.add_axes([(left + side + pad) / w, bottom / h, bar / w, side / h])
 
     def _go_to(self):
         x, y = self._rclick_xy
@@ -644,12 +676,13 @@ class LineScanTab(_PlotTab):
             return
         self.fig.clear()
         ax = self.fig.add_subplot(111)
+        ax.tick_params(labelsize=FONT)
         s = self.shown
-        ax.set_ylabel("Intensity (cts/s)")
+        ax.set_ylabel("Intensity (cts/s)", fontsize=FONT)
         ax.grid(alpha=0.3)
         if s is None:
-            ax.set_xlabel("position (µm)")
-            ax.text(0.5, 0.5, "Optimize X, Y or Z", ha="center", va="center", transform=ax.transAxes, color="#888888")
+            ax.set_xlabel("position (µm)", fontsize=FONT)
+            ax.text(0.5, 0.5, "Optimize X, Y or Z", ha="center", va="center", transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
             self.canvas.draw_idle()
             return
         if not np.all(np.isnan(s["data_y"])):
@@ -658,7 +691,7 @@ class LineScanTab(_PlotTab):
         if s["final_position_axis"] is not None:
             ax.axvline(s["final_position_axis"], color="#1864ab", linewidth=1.5)
         ax.set_xlim(s["min_position"], s["max_position"])
-        ax.set_xlabel(f"{s['axis']} position (µm)")
+        ax.set_xlabel(f"{s['axis']} position (µm)", fontsize=FONT)
         self.canvas.draw_idle()
 
     def _go_to(self):
