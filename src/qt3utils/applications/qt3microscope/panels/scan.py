@@ -225,19 +225,20 @@ class _PlotTab:
             from matplotlib.figure import Figure
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
             # Same text size as the scope plot. The figure follows the size of
-            # the tab (constrained layout keeps the labels inside), so ask Tk
-            # for a small canvas and let it grow, rather than asking for more
-            # room than the tab has and getting clipped.
-            try:
-                self.fig = Figure(figsize=(4, 3), dpi=96 * scale, layout="constrained")
-            except TypeError:  # older matplotlib
-                self.fig = Figure(figsize=(4, 3), dpi=96 * scale, constrained_layout=True)
+            # the tab, so ask Tk for a small canvas and let it grow, rather than
+            # asking for more room than the tab has and getting clipped. The
+            # axes are placed by hand with margins in points (_place_axes), the
+            # same on every matplotlib version.
+            self.fig = Figure(figsize=(4, 3), dpi=96 * scale)
             self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot)
             self.canvas.get_tk_widget().configure(width=int(300 * scale), height=int(220 * scale))
             tb = NavigationToolbar2Tk(self.canvas, self.plot, pack_toolbar=False)
             tb.update()
             tb.pack(side="bottom", fill="x")
             self.canvas.get_tk_widget().pack(fill="both", expand=True)
+            # The Line scan tab is hidden at launch: when a tab is first shown,
+            # size the figure to it in case Tk sent no resize while hidden.
+            self.canvas.get_tk_widget().bind("<Map>", self._fit_to_widget, add="+")
             self.canvas.mpl_connect("button_press_event", self._on_click)
         except Exception as e:
             ttk.Label(self.plot, text=f"No plot: {e}", foreground=RED).pack(anchor="w")
@@ -245,6 +246,21 @@ class _PlotTab:
         self.rclick.add_command(label="Go to position", command=self._go_to)
         self._rclick_xy = (None, None)
         self.save_btn.configure(state="disabled")
+
+    def _fit_to_widget(self, _event=None):
+        widget = self.canvas.get_tk_widget()
+        w, h = widget.winfo_width(), widget.winfo_height()
+        if w > 10 and h > 10:
+            self.fig.set_size_inches(w / self.fig.dpi, h / self.fig.dpi, forward=False)
+            self.redraw()
+
+    def _place_axes(self, ax):
+        """Fill the plot area, leaving room in points for the tick labels and titles."""
+        pt = self.fig.dpi / 72.0
+        w = self.fig.get_figwidth() * self.fig.dpi
+        h = self.fig.get_figheight() * self.fig.dpi
+        left, right, bottom, top = 56 * pt, 14 * pt, 36 * pt, 10 * pt
+        ax.set_position([left / w, bottom / h, max(0.05, 1 - (left + right) / w), max(0.05, 1 - (bottom + top) / h)])
 
     def _entry(self, row, label, value, width=8):
         ttk.Label(self.left, text=label).grid(row=row, column=0, sticky="w", pady=2)
@@ -526,13 +542,9 @@ class ImageScanTab(_PlotTab):
 
     def _image_at_left(self, ax):
         """Put the square image at the left of the tab with the colour bar
-        right beside it (constrained layout would centre it). Returns the
+        right beside it (a centred layout would leave it in the middle). Returns the
         colour bar's axes. Margins are in points so the labels fit at any
         size and screen scaling."""
-        try:
-            self.fig.set_layout_engine("none")
-        except AttributeError:  # older matplotlib
-            self.fig.set_constrained_layout(False)
         pt = self.fig.dpi / 72.0
         w = self.fig.get_figwidth() * self.fig.dpi
         h = self.fig.get_figheight() * self.fig.dpi
@@ -613,6 +625,8 @@ class LineScanTab(_PlotTab):
         ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
                   wraplength=int(230 * scale)).grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 0))
         self.redraw()
+        if self.fig is not None:  # margins are in points: recompute when the tab resizes
+            self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
 
     def _set_running(self, running):
         for b in self.opt_btns:
@@ -690,6 +704,7 @@ class LineScanTab(_PlotTab):
         self.fig.clear()
         ax = self.fig.add_subplot(111)
         ax.tick_params(labelsize=FONT)
+        self._place_axes(ax)
         s = self.shown
         ax.set_ylabel("Intensity (cts/s)", fontsize=FONT)
         ax.grid(alpha=0.3)
