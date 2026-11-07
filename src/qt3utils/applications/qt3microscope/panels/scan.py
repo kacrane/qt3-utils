@@ -96,7 +96,7 @@ class ScanEngine:
         self.controller = None
         self.busy = ""
         self._scope_was_running = False
-        self.n_scans = 0
+        self.n_scans = {}  # numbered separately per kind: image scans, line scans
         self.last_save_directory = None
         self.closing = False
         hub.on_close(self.close)
@@ -105,9 +105,9 @@ class ScanEngine:
         if scope is not None:
             scope.blocked = lambda: self.busy
 
-    def next_id(self):
-        self.n_scans += 1
-        return str(self.n_scans).zfill(3)
+    def next_id(self, kind):
+        self.n_scans[kind] = self.n_scans.get(kind, 0) + 1
+        return str(self.n_scans[kind]).zfill(3)
 
     # -- positions (from the Stage drawer's shared positioners) ----------------
     def limits(self, axis):
@@ -336,7 +336,10 @@ class ImageScanTab(_PlotTab):
         # Δz (µm) at which the outline of the left scan on the pinned scan is faintest.
         self.box_z_full = float(self.cfg.get("box_z_full", 5.0))
         self.running = None  # the scan being taken, while rows are being read
+        self.paused = None   # a scan stopped by Pause, until Continue or Cancel
+        self.pin_manual = False  # True once you pin a scan yourself
         self._pause = False
+        self._cancel = False
         self.norm = (None, None)
         r = 0
         self._heading(r, "Confocal image")
@@ -346,11 +349,13 @@ class ImageScanTab(_PlotTab):
         btns = ttk.Frame(self.left)
         btns.grid(row=r + 4, column=0, columnspan=2, sticky="w", pady=(6, 0))
         self.start_btn = tk.Button(btns, text="Start scan", width=10, bg="#1f8f2f", fg="white", command=self.start)
-        self.pause_btn = tk.Button(btns, text="Pause", width=8, command=self.pause)
-        self.cont_btn = tk.Button(btns, text="Continue", width=8, command=self.continue_scan)
+        # Pause turns into Continue while a scan is paused; Cancel ends the scan
+        # early (running or paused) and goes back to where it started.
+        self.pause_btn = tk.Button(btns, text="Pause", width=8, command=self.pause_or_continue)
+        self.cancel_btn = tk.Button(btns, text="Cancel", width=8, command=self.cancel)
         self.start_btn.grid(row=0, column=0, padx=1)
         self.pause_btn.grid(row=0, column=1, padx=1)
-        self.cont_btn.grid(row=0, column=2, padx=1)
+        self.cancel_btn.grid(row=0, column=2, padx=1)
         self._heading(r + 5, "Image settings")
         self.min_e = self._entry(r + 6, "Minimum (cts/s)", 0)
         self.max_e = self._entry(r + 7, "Maximum (cts/s)", 5000)
@@ -393,11 +398,15 @@ class ImageScanTab(_PlotTab):
     def _buttons(self):
         scan = self.shown
         running = self.running is not None
-        unfinished = scan is not None and scan["index"] < scan["n_pixels"]
-        self.start_btn.configure(state="disabled" if running else "normal")
-        self.pause_btn.configure(state="normal" if running else "disabled")
-        self.cont_btn.configure(state="normal" if (not running and unfinished) else "disabled")
-        self.save_btn.configure(state="normal" if (scan is not None and not running) else "disabled")
+        busy = running or self.paused is not None
+        self.start_btn.configure(state="disabled" if busy else "normal")
+        if self.paused is not None and not running:
+            self.pause_btn.configure(text="Continue", state="normal")
+        else:
+            self.pause_btn.configure(text="Pause", state="normal" if (running and not self._pause and not self._cancel)
+                                     else "disabled")
+        self.cancel_btn.configure(state="normal" if busy and not self._cancel else "disabled")
+        self.save_btn.configure(state="normal" if (scan is not None and scan is not self.running) else "disabled")
         self.pin_btn.configure(state="normal" if scan is not None else "disabled")
         pinned_busy = self.pinned is None or self.pinned is self.running
         self.save_pin_btn.configure(state="disabled" if pinned_busy else "normal")
@@ -489,14 +498,14 @@ class ImageScanTab(_PlotTab):
                 continue
             colour = "#1864ab" if sc is self.shown else ("#ff9f1c" if sc is self.pinned else "#d0d0d0")
             t["frame"].configure(highlightbackground=colour, highlightcolor=colour)
-            t["x"].configure(state="disabled" if sc is self.running else "normal")
+            t["x"].configure(state="disabled" if sc is self.running or sc is self.paused else "normal")
 
     def _pick_scan(self, scan):
         self._show(scan)
         self.pick.current(self.scans.index(scan))
 
     def discard(self, scan):
-        if scan is self.running:
+        if scan is self.running or scan is self.paused:
             return
         t = self.thumbs.pop(scan["id"], None)
         if t is not None:
@@ -504,6 +513,7 @@ class ImageScanTab(_PlotTab):
         self.scans.remove(scan)
         if self.pinned is scan:
             self.pinned = None
+            self.pin_manual = False
         if self.shown is scan:
             self.shown = self.scans[-1] if self.scans else None
         self.pick.configure(values=[s["title"] for s in self.scans])
@@ -535,12 +545,14 @@ class ImageScanTab(_PlotTab):
         if scan is None:
             return
         self.pinned = scan
+        self.pin_manual = True
         self._pin_list()
         self._buttons()
         self.redraw()
 
     def unpin(self):
         self.pinned = None
+        self.pin_manual = False
         self._pin_list()
         self._buttons()
         self.redraw()
@@ -568,6 +580,8 @@ class ImageScanTab(_PlotTab):
 
     # -- scanning ------------------------------------------------------------
     def start(self):
+        if self.running is not None or self.paused is not None:
+            return
         try:
             rng, n, t = self._read_settings()
         except ValueError as e:
@@ -578,40 +592,61 @@ class ImageScanTab(_PlotTab):
 
     def _begin(self, rng, n, t):
         unknown = [a for a in ("x", "y", "z") if self.engine.position(a) is None]
+        before = tuple(self.engine.position(a) for a in ("x", "y"))  # go back here after
         pos = [self.engine.position(a) or 0.0 for a in ("x", "y", "z")]
         mn1, mx1, c1 = centred_range(pos[0], rng, *self.engine.limits("x"))
         mn2, mx2, c2 = centred_range(pos[1], rng, *self.engine.limits("y"))
-        sid = self.engine.next_id()
+        sid = self.engine.next_id("image")
         ts = datetime.datetime.now()
         scan = {"id": sid, "timestamp": ts, "axis_1": "x", "axis_2": "y", "range": rng, "n_pixels": n,
                 "time": t, "time_per_pixel": t / n, "start_position_vector": tuple(pos),
                 "start_position_axis_1": c1, "start_position_axis_2": c2,
                 "min_position_1": mn1, "max_position_1": mx1, "min_position_2": mn2, "max_position_2": mx2,
                 "data_x": np.linspace(mn1, mx1, n), "data_y": np.linspace(mn2, mx2, n),
-                "data_z": np.full((n, n), np.nan), "index": 0,
+                "data_z": np.full((n, n), np.nan), "index": 0, "return_to": before,
                 "title": f"Image {sid}  {ts.strftime('%H:%M:%S')}  {rng:g} µm, {n} px, {t:g} s/row"}
+        if not self.pin_manual and self.shown is not None:
+            self.pinned = self.shown  # nothing pinned by hand: the previous scan moves over
         self._add_scan(scan)
         note = f" ({', '.join(unknown).upper()} not set yet, using 0)" if unknown else ""
         self._run(scan, f"Scanning image {sid}{note}...")
 
-    def continue_scan(self):
-        scan = self.shown
-        if scan is None or scan["index"] >= scan["n_pixels"]:
-            return
-        if not self.engine.acquire("An image scan is running.", lambda: self._run(scan, f"Continuing image {scan['id']}...")):
-            self.status.set(f"Busy: {self.engine.busy}")
+    def pause_or_continue(self):
+        if self.paused is not None and self.running is None:
+            scan = self.paused
+            if not self.engine.acquire("An image scan is running.",
+                                       lambda: self._run(scan, f"Continuing image {scan['id']}...")):
+                self.status.set(f"Busy: {self.engine.busy}")
+        elif self.running is not None:
+            self._pause = True
+            self.status.set("Pausing after this row...")
+            self._buttons()
+
+    def cancel(self):
+        """End the scan early and go back to where it started."""
+        if self.running is not None:
+            self._cancel = True
+            self.status.set("Cancelling after this row...")
+            self._buttons()
+        elif self.paused is not None:
+            scan = self.paused
+            self._cancel = True
+            self._buttons()
+            if not self.engine.acquire("An image scan is ending.", lambda: self._finish(
+                    scan, f"Image {scan['id']} cancelled at row {scan['index']} of {scan['n_pixels']}.",
+                    home=True, cancelled=True)):
+                self._cancel = False
+                self.status.set(f"Busy: {self.engine.busy}")
+                self._buttons()
 
     def _run(self, scan, text):
         self.running = scan
+        self.paused = None
         self._pause = False
+        self._cancel = False
         self.status.set(text)
         self._buttons()
         self.engine.submit("scan start", lambda: self.engine.ctrl().counter_controller.start(), self._row_or_fail)
-
-    def pause(self):
-        if self.running is not None:
-            self._pause = True
-            self.status.set("Pausing after this row...")
 
     def _row_job(self, scan, index):
         c = self.engine.ctrl()
@@ -638,9 +673,12 @@ class ImageScanTab(_PlotTab):
             return
         if scan["index"] >= scan["n_pixels"]:
             return self._finish(scan, f"Image {scan['id']} complete.", home=True)
+        if self._cancel:
+            return self._finish(scan, f"Image {scan['id']} cancelled at row {scan['index']} of {scan['n_pixels']}.",
+                                home=True, cancelled=True)
         if self._pause:
             return self._finish(scan, f"Paused at row {scan['index']} of {scan['n_pixels']}. Continue resumes it.",
-                                home=False)
+                                home=False, paused=True)
         i = scan["index"]
         self.engine.submit("scan row", lambda: self._row_job(scan, i), lambda ok, res: self._row_done(scan, i, ok, res))
 
@@ -654,18 +692,25 @@ class ImageScanTab(_PlotTab):
             self.status.set(f"Image {scan['id']}: row {i + 1} of {scan['n_pixels']}")
         self._row_or_fail(ok, result)
 
-    def _finish(self, scan, text, home):
+    def _finish(self, scan, text, home, paused=False, cancelled=False):
         def stop_job():
             c = self.engine.ctrl()
             c.counter_controller.stop()
-            if home:  # back to the centre of the scan, as qdlscan
-                c._set_axis(axis_controller=getattr(c, f"{scan['axis_1']}_axis_controller"),
-                            position=scan["start_position_axis_1"])
-                c._set_axis(axis_controller=getattr(c, f"{scan['axis_2']}_axis_controller"),
-                            position=scan["start_position_axis_2"])
+            if home:  # back to where the piezos were before the scan started
+                for axis, pos in zip((scan["axis_1"], scan["axis_2"]), scan["return_to"]):
+                    if pos is not None:
+                        c._set_axis(axis_controller=getattr(c, f"{axis}_axis_controller"), position=pos)
 
         def done(ok, result):
             self.running = None
+            self.paused = scan if paused else None
+            self._pause = self._cancel = False
+            if cancelled:
+                scan["title"] += "  (cancelled)"
+                self.pick.configure(values=[s["title"] for s in self.scans])
+                if self.shown in self.scans:
+                    self.pick.current(self.scans.index(self.shown))
+                self._pin_list()
             self.engine.release()
             self.status.set(text if ok else f"{text} Stopping failed: {result}")
             self._buttons()
@@ -783,10 +828,6 @@ class ImageScanTab(_PlotTab):
         alpha = 1.0 - 0.85 * min(1.0, abs(dz) / self.box_z_full) if self.box_z_full > 0 else 1.0
         ax.add_patch(Rectangle((e[0], e[2]), e[1] - e[0], e[3] - e[2], fill=False, edgecolor="#ff9f1c",
                                linewidth=1.8, alpha=alpha, clip_on=True))
-        lo, hi = ax.get_xlim()
-        right_side = (e[0] + e[1]) / 2 > (lo + hi) / 2  # keep the label inside the image
-        ax.text(e[1] if right_side else e[0], e[3], f"Δz {dz:+.1f}", color="#ff9f1c", alpha=max(alpha, 0.5),
-                fontsize=FONT - 1, va="bottom", ha="right" if right_side else "left", clip_on=True)
 
     def _go_to(self):
         x, y = self._rclick_xy
@@ -908,7 +949,7 @@ class LineScanTab(_PlotTab):
         start = start or 0.0
         lo, hi = self.engine.limits(axis)
         mn, mx, _ = centred_range(start, rng, lo, hi)
-        sid = self.engine.next_id()
+        sid = self.engine.next_id("line")
         ts = datetime.datetime.now()
         pos = tuple(self.engine.position(a) or 0.0 for a in ("x", "y", "z"))
         scan = {"id": sid, "timestamp": ts, "axis": axis, "range": rng, "n_pixels": n, "time": t,
