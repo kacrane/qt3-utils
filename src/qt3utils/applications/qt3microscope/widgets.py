@@ -40,10 +40,12 @@ class CollapsibleSection(tk.Frame):
     says what its instrument is doing.
     """
 
-    def __init__(self, parent, title, start_open=False, on_toggle=None):
+    def __init__(self, parent, title, start_open=False, on_toggle=None, on_popout=None):
         super().__init__(parent, bd=1, relief="solid")
         self._open = start_open
         self._on_toggle = on_toggle
+        self.popped = False
+        self.title_text = title
 
         self.header = tk.Frame(self, bg=HEADER_BG, cursor="hand2")
         self.header.pack(fill="x")
@@ -52,13 +54,21 @@ class CollapsibleSection(tk.Frame):
         self.title = tk.Label(self.header, text=title, bg=HEADER_BG,
                               font=("TkDefaultFont", 10, "bold"))
         self.title.pack(side="left", pady=4)
+        # Pop-out button, rightmost in the header: moves the section to its own
+        # window and back (step 8).
+        self.pop_btn = None
+        if on_popout is not None:
+            self.pop_btn = tk.Button(self.header, text="↗", width=2, padx=0, pady=0, bd=1,
+                                     relief="flat", bg=HEADER_BG, activebackground="#b5b5b5",
+                                     cursor="hand2", command=on_popout)
+            self.pop_btn.pack(side="right", padx=(0, 4))
         self.summary = tk.Label(self.header, text="—", bg=HEADER_BG)
         self.summary.pack(side="right", padx=6)
         # Room for a quick-action button (Laser ON/OFF etc.) added by a panel.
         self.quick = tk.Frame(self.header, bg=HEADER_BG)
         self.quick.pack(side="right")
         for w in (self.header, self.arrow, self.title, self.summary):
-            w.bind("<Button-1>", lambda e: self.toggle())
+            w.bind("<Button-1>", lambda e: None if self.popped else self.toggle())
 
         self.body = ttk.Frame(self, padding=(8, 6))
         self._refresh()
@@ -68,6 +78,8 @@ class CollapsibleSection(tk.Frame):
         return self._open
 
     def set_open(self, value):
+        if self.popped:
+            return
         if value != self._open:
             self._open = value
             self._refresh()
@@ -76,6 +88,23 @@ class CollapsibleSection(tk.Frame):
 
     def toggle(self):
         self.set_open(not self._open)
+
+    def set_popped(self, popped):
+        """In its own window a section stays open and its header does not fold it."""
+        self.popped = popped
+        if popped:
+            self._open = True
+            self.arrow.config(text="")
+            self.header.config(cursor="")
+            if self.pop_btn is not None:
+                self.pop_btn.config(text="↙ Back to drawer", width=0, padx=4)
+            self.body.pack(fill="both", expand=True)
+        else:
+            self.header.config(cursor="hand2")
+            if self.pop_btn is not None:
+                self.pop_btn.config(text="↗", width=2, padx=0)
+            self.body.pack_forget()
+            self._refresh()
 
     def set_summary(self, text):
         self.summary.config(text=text)

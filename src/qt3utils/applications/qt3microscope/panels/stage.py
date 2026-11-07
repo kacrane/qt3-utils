@@ -120,14 +120,22 @@ class StagePanel:
             self.set_status(" ".join(f"{p:.1f}" for p in self.positions if p is not None), GREEN)
 
     # -- keyboard stepping ----------------------------------------------------
+    def rebind_keys(self):
+        """The section moved to or from its own window: bind the keys there."""
+        self._toggle_keys()
+
     def _toggle_keys(self):
-        for seq, funcid in self._bindings:
-            self.window.unbind(seq, funcid)
+        for window, seq, funcid in self._bindings:
+            try:
+                window.unbind(seq, funcid)
+            except tk.TclError:
+                pass
         self._bindings = []
+        self.window = self.section.winfo_toplevel()
         if self.step_var.get():
             for key in STEP_KEYS:
                 seq = f"<KeyPress-{key}>"
-                self._bindings.append((seq, self.window.bind(seq, self._on_key, add="+")))
+                self._bindings.append((self.window, seq, self.window.bind(seq, self._on_key, add="+")))
             labels = [ax.get("label", "?") for ax in self.axes]
             hint = "←/→ " + labels[0] if labels else ""
             if len(labels) > 1:

@@ -353,6 +353,10 @@ class ImageScanTab(_PlotTab):
         # early (running or paused) and goes back to where it started.
         self.pause_btn = tk.Button(btns, text="Pause", width=8, command=self.pause_or_continue)
         self.cancel_btn = tk.Button(btns, text="Cancel", width=8, command=self.cancel)
+        # While paused, a double-click on Start scan cancels the paused scan
+        # (back to where it started) and starts a new one.
+        self.start_btn.bind("<Double-Button-1>", lambda e: self.restart())
+        self._restart = False
         self.start_btn.grid(row=0, column=0, padx=1)
         self.pause_btn.grid(row=0, column=1, padx=1)
         self.cancel_btn.grid(row=0, column=2, padx=1)
@@ -399,7 +403,8 @@ class ImageScanTab(_PlotTab):
         scan = self.shown
         running = self.running is not None
         busy = running or self.paused is not None
-        self.start_btn.configure(state="disabled" if busy else "normal")
+        paused_only = self.paused is not None and not running and not self._cancel
+        self.start_btn.configure(state="normal" if (not busy or paused_only) else "disabled")
         if self.paused is not None and not running:
             self.pause_btn.configure(text="Continue", state="normal")
         else:
@@ -580,6 +585,10 @@ class ImageScanTab(_PlotTab):
 
     # -- scanning ------------------------------------------------------------
     def start(self):
+        if self.paused is not None and self.running is None and not self._cancel:
+            self.status.set(f"Image {self.paused['id']} is paused. Double-click Start scan to cancel it "
+                            "and start a new scan, or press Continue.")
+            return
         if self.running is not None or self.paused is not None:
             return
         try:
@@ -621,6 +630,15 @@ class ImageScanTab(_PlotTab):
             self._pause = True
             self.status.set("Pausing after this row...")
             self._buttons()
+
+    def restart(self):
+        """Double-click on Start scan while paused: Cancel, then Start."""
+        if self.paused is None or self.running is not None or self._cancel:
+            return
+        self._restart = True
+        self.cancel()
+        if not self._cancel:  # the cancel could not begin (DAQ busy)
+            self._restart = False
 
     def cancel(self):
         """End the scan early and go back to where it started."""
@@ -715,6 +733,10 @@ class ImageScanTab(_PlotTab):
             self.status.set(text if ok else f"{text} Stopping failed: {result}")
             self._buttons()
             self.redraw()
+            if self._restart:
+                self._restart = False
+                if ok and self.paused is None:
+                    self.frame.after(10, self.start)
 
         self.engine.submit("scan stop", stop_job, done)
 

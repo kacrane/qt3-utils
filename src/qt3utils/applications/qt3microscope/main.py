@@ -20,9 +20,11 @@ Run:  python -m qt3utils.applications.qt3microscope.main
 """
 
 import argparse
+import json
 import logging
 import os
 import sys
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -43,6 +45,14 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(APP_DIR, "config_files")
 ICON_PATH = os.path.join(APP_DIR, "QT3logo.ico")
 DEFAULT_SETUP = "VQLM"
+
+# Window state (step 8): size, drawer width, folded sections and popped-out
+# windows. The size and drawer width always come back; the folded sections,
+# popped-out windows and open tab only if the program reopens within
+# RESTORE_WITHIN_S, otherwise the profile defaults apply.
+STATE_DIR = os.path.join(os.path.expanduser("~"), ".qt3utils")
+RESTORE_WITHIN_S = 2 * 3600
+STATE_SAVE_EVERY_MS = 60_000
 
 LOG_PATH = os.path.join(os.path.expanduser("~"), ".qt3utils", "qt3microscope.log")
 try:
@@ -70,14 +80,17 @@ class MicroscopeWindow:
         self.setup = profile.get("setup", "?")
         self.sections = {}
         self.chips = {}
+        self.popped = {}        # drawer section key -> placeholder left in the drawer
         # Pixel sizes below are written for a 96 dpi screen; scale them to this one.
         self.scale = max(1.0, window.winfo_fpixels("1i") / 96.0)
+        self.state_path = os.path.join(STATE_DIR, f"qt3microscope_window_{self.setup}.json")
+        self.saved, self.recent = self._load_state()
 
         window.title(profile.get("title", f"QT3 Microscope — {self.setup}"))
         w, h = (int(v) for v in profile.get("geometry", "1440x900").split("x"))
-        window.geometry(f"{self.px(w)}x{self.px(h)}")
+        window.geometry(self.saved.get("geometry") or f"{self.px(w)}x{self.px(h)}")
         window.minsize(self.px(1100), self.px(700))
-        if profile.get("start_maximized", True):
+        if self.saved.get("zoomed", profile.get("start_maximized", True)):
             try:
                 window.state("zoomed")  # Windows
             except tk.TclError:
@@ -95,6 +108,8 @@ class MicroscopeWindow:
         self.hub = Hub(window)
         self._attach_panels()
         window.protocol("WM_DELETE_WINDOW", self.quit)
+        window.after(300, self._restore_late)
+        window.after(STATE_SAVE_EVERY_MS, self._autosave)
         logger.info("QT3 Microscope opened with setup %s", self.setup)
 
     def px(self, value):
@@ -111,6 +126,7 @@ class MicroscopeWindow:
         view = tk.Menu(bar, tearoff=0)
         view.add_command(label="Open all drawer sections", command=lambda: self._set_all(True))
         view.add_command(label="Fold all drawer sections", command=lambda: self._set_all(False))
+        view.add_command(label="Bring all windows back to the drawer", command=self._pop_in_all)
         view.add_separator()
         self.drawer_shown = tk.BooleanVar(value=True)
         view.add_checkbutton(label="Show instrument drawer", variable=self.drawer_shown,
@@ -157,7 +173,7 @@ class MicroscopeWindow:
         self.window.after(50, self._place_sash)
 
     def _place_sash(self):
-        width = self.px(self.profile.get("drawer_width", 390))
+        width = self.saved.get("drawer_width") or self.px(self.profile.get("drawer_width", 390))
         if hasattr(self, "drawer_scroll"):
             # Widen the drawer if its contents need it (e.g. an enlarged reading).
             self.window.update_idletasks()
@@ -173,7 +189,8 @@ class MicroscopeWindow:
         bottom = self.profile.get("bottom", {})
         frame = ttk.Frame(parent)
 
-        scope = CollapsibleSection(frame, bottom.get("scope_label", "Scope"), start_open=True)
+        scope = CollapsibleSection(frame, bottom.get("scope_label", "Scope"),
+                                   start_open=self._start_open("scope", True))
         scope.pack(side="left", fill="x", expand=True, anchor="s")
         ttk.Label(scope.body, text="Count rate and trace go here (scope step).",
                   foreground="#555555").pack(anchor="w", pady=30)
@@ -198,9 +215,13 @@ class MicroscopeWindow:
         self.drawer_order = []
         self.section_shown = {}
         for item in self.profile.get("drawer", []):
-            sec = CollapsibleSection(scroll.inner, item["label"], start_open=item.get("open", False))
+            key = item["key"]
+            sec = CollapsibleSection(scroll.inner, item["label"],
+                                     start_open=self._start_open(key, item.get("open", False)),
+                                     on_popout=lambda k=key: self.toggle_popout(k))
             # hidden: true leaves a section out of the drawer until View > Drawer sections shows it.
-            var = tk.BooleanVar(value=not item.get("hidden", False))
+            shown = self.saved.get("shown", {}).get(key, not item.get("hidden", False))
+            var = tk.BooleanVar(value=shown)
             self.section_shown[item["key"]] = var
             self.drawer_order.append(item["key"])
             self.sections_menu.add_checkbutton(label=item["label"], variable=var,
@@ -215,14 +236,21 @@ class MicroscopeWindow:
     def _repack_drawer(self):
         """Show the drawer sections that are switched on, in profile order."""
         for key in self.drawer_order:
-            self.sections[key].pack_forget()
+            if key not in self.popped:
+                self.sections[key].pack_forget()
+            else:
+                self.popped[key].pack_forget()
         for key in self.drawer_order:
-            if self.section_shown[key].get():
+            if not self.section_shown[key].get():
+                continue
+            if key in self.popped:  # its own window; a note in the drawer says where it went
+                self.popped[key].pack(fill="x", padx=6, pady=3)
+            else:
                 self.sections[key].pack(fill="x", padx=6, pady=3)
 
     def _set_all(self, value):
         for key, sec in self.sections.items():
-            if key != "scope":
+            if key != "scope" and key not in self.popped:
                 sec.set_open(value)
 
     def _toggle_drawer(self):
@@ -231,6 +259,170 @@ class MicroscopeWindow:
             self.window.after(20, self._place_sash)
         else:
             self.hpane.forget(self.drawer)
+
+    # ----- pop-out (step 8) -------------------------------------------------
+    def toggle_popout(self, key):
+        if key in self.popped:
+            self.pop_in(key)
+        else:
+            self.pop_out(key)
+
+    def pop_out(self, key, geometry=None):
+        """Move a drawer section into its own window. The panel keeps running:
+        Tk's "wm manage" turns the same frame into a window, so nothing is
+        rebuilt and no hardware connection is touched."""
+        if key in self.popped:
+            return
+        sec = self.sections[key]
+        self.window.update_idletasks()
+        width = max(sec.winfo_width(), sec.winfo_reqwidth())
+        x0 = sec.winfo_rootx()
+        sec.pack_forget()
+        sec.set_popped(True)
+        try:
+            self.window.wm_manage(sec)
+        except tk.TclError as e:
+            logger.warning("could not pop out %s: %r", key, e)
+            sec.set_popped(False)
+            self._repack_drawer()
+            return
+        title = f"{sec.title_text} — QT3 Microscope {self.setup}"
+        tk_call = self.window.tk.call
+        tk_call("wm", "title", sec._w, title)
+        tk_call("wm", "protocol", sec._w, "WM_DELETE_WINDOW",
+                self.window.register(lambda: self.pop_in(key)))
+        if os.path.exists(ICON_PATH):
+            try:
+                tk_call("wm", "iconbitmap", sec._w, ICON_PATH)
+            except tk.TclError:
+                pass
+        self.window.update_idletasks()
+        if not geometry:
+            # Open it just left of the drawer, the size it needs, each new one
+            # a little lower than the last so they don't hide each other.
+            height = sec.winfo_reqheight()
+            x = max(0, x0 - width - self.px(20))
+            y = self.window.winfo_rooty() + self.px(80 + 40 * len(self.popped))
+            geometry = f"{width}x{height}+{x}+{y}"
+        tk_call("wm", "geometry", sec._w, geometry)
+
+        note = ttk.Frame(self.drawer_scroll.inner, padding=(8, 4), relief="solid", borderwidth=1)
+        ttk.Label(note, text=f"{sec.title_text}  ↗", foreground="#555555").pack(side="left")
+        ttk.Button(note, text="Bring back", command=lambda: self.pop_in(key)).pack(side="right")
+        ttk.Button(note, text="Show", width=6,
+                   command=lambda: tk_call("raise", sec._w)).pack(side="right", padx=4)
+        self.popped[key] = note
+        self._repack_drawer()
+        logger.info("popped out %s", key)
+        self._panel_moved(key)
+
+    def pop_in(self, key):
+        """Put a popped-out section back in the drawer."""
+        note = self.popped.pop(key, None)
+        if note is None:
+            return
+        sec = self.sections[key]
+        try:
+            self.window.wm_forget(sec)
+        except tk.TclError:
+            pass
+        note.destroy()
+        sec.set_popped(False)
+        self._repack_drawer()
+        self._panel_moved(key)
+        self.window.after(20, self._place_sash)
+
+    def _panel_moved(self, key):
+        panel = getattr(self, f"{key}_panel", None)
+        if hasattr(panel, "rebind_keys"):
+            panel.rebind_keys()
+
+    def _pop_in_all(self):
+        for key in list(self.popped):
+            self.pop_in(key)
+
+    # ----- saved window state (step 8) -------------------------------------
+    def _load_state(self):
+        """Returns (saved state, whether it is recent enough to restore the
+        folded sections, popped-out windows and open tab)."""
+        try:
+            with open(self.state_path, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            return {}, False
+        if not isinstance(saved, dict):
+            return {}, False
+        age = time.time() - float(saved.get("saved_at", 0))
+        return saved, 0 <= age <= RESTORE_WITHIN_S
+
+    def _start_open(self, key, default):
+        if self.recent and key in self.saved.get("open", {}):
+            return bool(self.saved["open"][key])
+        return default
+
+    def _restore_late(self):
+        """Things that need the panels built first: open tab, popped-out windows."""
+        if not self.recent:
+            return
+        tab = self.saved.get("tab")
+        if tab in self.tab_pages:
+            try:
+                self.tabs.select(self.tab_pages[tab])
+            except tk.TclError:
+                pass
+        for key, geometry in (self.saved.get("popped") or {}).items():
+            if key in self.sections and key != "scope" and self.section_shown[key].get():
+                self.pop_out(key, geometry)
+
+    def _collect_state(self):
+        w = self.window
+        state = {"saved_at": time.time(), "setup": self.setup}
+        try:
+            zoomed = w.state() == "zoomed"
+        except tk.TclError:
+            zoomed = False
+        state["zoomed"] = zoomed
+        if zoomed:
+            # Keep the un-maximized size from before, so un-maximizing still works.
+            if self.saved.get("geometry"):
+                state["geometry"] = self.saved["geometry"]
+        else:
+            state["geometry"] = w.geometry()
+        if self.drawer_shown.get():
+            try:
+                state["drawer_width"] = w.winfo_width() - self.hpane.sashpos(0)
+            except tk.TclError:
+                pass
+        elif self.saved.get("drawer_width"):
+            state["drawer_width"] = self.saved["drawer_width"]
+        state["open"] = {k: sec.is_open for k, sec in self.sections.items() if k not in self.popped}
+        for k in self.popped:  # back in the drawer it opens as it was before popping out
+            state["open"][k] = True
+        state["shown"] = {k: v.get() for k, v in self.section_shown.items()}
+        state["popped"] = {k: w.tk.call("wm", "geometry", self.sections[k]._w) for k in self.popped}
+        try:
+            current = self.tabs.select()
+            state["tab"] = next((n for n, p in self.tab_pages.items() if str(p) == current), None)
+        except tk.TclError:
+            pass
+        return state
+
+    def save_state(self):
+        try:
+            state = self._collect_state()
+            os.makedirs(STATE_DIR, exist_ok=True)
+            tmp = self.state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=1)
+            os.replace(tmp, self.state_path)
+            self.saved = state
+        except Exception as e:  # never let a state file stop the program or its closing
+            logger.warning("could not save window state: %r", e)
+
+    def _autosave(self):
+        """Save now and then too, so the state survives a crash."""
+        self.save_state()
+        self.window.after(STATE_SAVE_EVERY_MS, self._autosave)
 
     # ----- instruments -----------------------------------------------------
     def _chip_setter(self, key):
@@ -340,6 +532,7 @@ class MicroscopeWindow:
                   foreground="#c62828", wraplength=self.px(330), justify="left").pack(anchor="w")
 
     def quit(self):
+        self.save_state()
         self.hub.close()
         self.window.destroy()
 
