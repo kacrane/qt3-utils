@@ -53,6 +53,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(APP_DIR, "config_files")
 ICON_PATH = os.path.join(APP_DIR, "QT3logo.ico")
 DEFAULT_SETUP = "VQLM"
+APP_ID = "QT3.Microscope"  # Windows taskbar ID; must match make_desktop_shortcut.ps1
 
 # Window state (step 8): size, drawer width, folded sections and popped-out
 # windows. The size and drawer width always come back; the folded sections,
@@ -105,7 +106,8 @@ class MicroscopeWindow:
                 pass
         if os.path.exists(ICON_PATH):
             try:
-                window.iconbitmap(ICON_PATH)
+                # default= also gives popped-out windows and message boxes the icon.
+                window.iconbitmap(default=ICON_PATH)
             except tk.TclError:
                 pass  # .ico only works on Windows; other systems keep the default icon
 
@@ -585,7 +587,9 @@ def enable_sharp_display():
     try:
         import ctypes
         # Its own taskbar button and icon, not grouped with other Python programs.
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("QT3.Microscope")
+        # make_desktop_shortcut.ps1 gives the shortcuts the same ID, so Windows
+        # shows the taskbar button as "QT3 Microscope" with its icon.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
     except Exception:
         pass
     try:
@@ -620,7 +624,7 @@ def main(is_root_process=True, argv=None):
         profile = load_profile(args.setup, args.config)
         if is_root_process:
             enable_sharp_display()  # must happen before the Tk window exists
-        window = tk.Tk() if is_root_process else tk.Toplevel()
+        window = tk.Tk(className="QT3 Microscope") if is_root_process else tk.Toplevel()
         MicroscopeWindow(window, profile)
     except Exception as e:
         if not is_root_process:
