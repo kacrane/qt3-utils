@@ -14,6 +14,9 @@ One program and one branch serve both microscopes. The setup profile
 (config_files/VQLM.yaml or TQLM.yaml) decides which instruments appear,
 so setup differences live in the profiles, not in separate branches.
 
+Desktop shortcut (no terminal window): run make_desktop_shortcut.ps1 once.
+Terminal output goes to the Log section under the scope instead.
+
 Run:  python -m qt3utils.applications.qt3microscope.main
       python -m qt3utils.applications.qt3microscope.main --setup TQLM
       python -m qt3utils.applications.qt3microscope.main --config my_profile.yaml
@@ -34,10 +37,15 @@ if __package__ in (None, ""):  # run as a plain script: put .../src on the path
     _here = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, os.path.abspath(os.path.join(_here, "..", "..", "..")))
 
+from qt3utils.applications.qt3microscope import console
 from qt3utils.applications.qt3microscope.hub import Hub
 from qt3utils.applications.qt3microscope.widgets import (CollapsibleSection, ScrollableFrame,
                                                          StatusChip, XYMicrometerBox)
 
+# Catch everything that would go to a terminal before logging is set up, so
+# the Log section under the scope shows it (the desktop shortcut runs
+# pythonw.exe, which has no terminal window).
+console.install()
 logger = logging.getLogger(__name__)
 logging.basicConfig()
 
@@ -187,7 +195,9 @@ class MicroscopeWindow:
 
     def _build_bottom_strip(self, parent):
         bottom = self.profile.get("bottom", {})
-        frame = ttk.Frame(parent)
+        outer = ttk.Frame(parent)
+        frame = ttk.Frame(outer)  # scope, and the XY micrometers on TQLM
+        frame.pack(side="top", fill="x")
 
         scope = CollapsibleSection(frame, bottom.get("scope_label", "Scope"),
                                    start_open=self._start_open("scope", True))
@@ -199,7 +209,19 @@ class MicroscopeWindow:
         if bottom.get("xy_micrometers", False):
             self.xy_box = XYMicrometerBox(frame, start_locked=True)
             self.xy_box.pack(side="right", anchor="s")
-        return frame
+
+        # Log under the scope: what used to go to the terminal window. Folded
+        # by default; its header counts errors and warnings.
+        log = CollapsibleSection(outer, "Log", start_open=self._start_open("log", False))
+        log.pack(side="top", fill="x")
+        self.sections["log"] = log
+        try:
+            from qt3utils.applications.qt3microscope.panels.log import LogPanel
+            self.log_panel = LogPanel(log, scale=self.scale)
+        except Exception as e:
+            logger.exception("log panel failed to start")
+            ttk.Label(log.body, text=f"Could not start the log: {e}", foreground="#c62828").pack(anchor="w")
+        return outer
 
     def _build_drawer(self, parent):
         outer = ttk.Frame(parent, width=self.px(self.profile.get("drawer_width", 390)))
@@ -250,7 +272,7 @@ class MicroscopeWindow:
 
     def _set_all(self, value):
         for key, sec in self.sections.items():
-            if key != "scope" and key not in self.popped:
+            if key not in ("scope", "log") and key not in self.popped:
                 sec.set_open(value)
 
     def _toggle_drawer(self):
@@ -562,6 +584,12 @@ def enable_sharp_display():
         return
     try:
         import ctypes
+        # Its own taskbar button and icon, not grouped with other Python programs.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("QT3.Microscope")
+    except Exception:
+        pass
+    try:
+        import ctypes
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(1)  # Windows 8.1 and later
         except (AttributeError, OSError):
@@ -570,13 +598,35 @@ def enable_sharp_display():
         logger.info("could not turn on sharp display: %r", e)
 
 
+def _startup_failed(err):
+    """With no terminal window, a failure before the main window opens would
+    be silent: say so in a message box."""
+    logger.exception("QT3 Microscope could not start")
+    try:
+        from tkinter import messagebox
+        root = tk._default_root or tk.Tk()
+        root.withdraw()
+        messagebox.showerror("QT3 Microscope",
+                             f"QT3 Microscope could not start:\n\n{err}\n\n"
+                             f"Details are in {console.CONSOLE_LOG}")
+        root.destroy()
+    except Exception:
+        pass
+
+
 def main(is_root_process=True, argv=None):
     args = parse_args(argv if (argv is not None or is_root_process) else [])
-    profile = load_profile(args.setup, args.config)
-    if is_root_process:
-        enable_sharp_display()  # must happen before the Tk window exists
-    window = tk.Tk() if is_root_process else tk.Toplevel()
-    MicroscopeWindow(window, profile)
+    try:
+        profile = load_profile(args.setup, args.config)
+        if is_root_process:
+            enable_sharp_display()  # must happen before the Tk window exists
+        window = tk.Tk() if is_root_process else tk.Toplevel()
+        MicroscopeWindow(window, profile)
+    except Exception as e:
+        if not is_root_process:
+            raise
+        _startup_failed(e)
+        sys.exit(1)
     if is_root_process:
         window.mainloop()
 
