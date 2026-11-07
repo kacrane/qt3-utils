@@ -249,6 +249,27 @@ class _PlotTab:
         self._rclick_xy = (None, None)
         self.save_btn.configure(state="disabled")
 
+    def _lock_left_width(self):
+        """Fix the settings column's width so the plots never resize when a
+        status or position message gets longer or shorter. The column is as
+        wide as its fixed controls (at least 230 px at 96 dpi), and the
+        messages wrap inside it."""
+        wrapping = [w for w in self.left.winfo_children()
+                    if isinstance(w, ttk.Label) and int(str(w.cget("wraplength") or 0)) > 0]
+        saved = []
+        for w in wrapping:  # measure the column without the messages
+            saved.append(w.cget("textvariable") or None)
+            w.configure(textvariable="", text="")
+        self.left.update_idletasks()
+        pad = int(16 * self.scale)
+        width = max(self.left.winfo_reqwidth(), int(230 * self.scale) + pad)
+        for w, var in zip(wrapping, saved):
+            if var:
+                w.configure(textvariable=var)
+            w.configure(wraplength=width - pad)
+        self.left.configure(width=width)
+        self.left.grid_propagate(False)  # height still comes from pack(fill="y")
+
     def _fit_to_widget(self, _event=None):
         widget = self.canvas.get_tk_widget()
         w, h = widget.winfo_width(), widget.winfo_height()
@@ -378,6 +399,7 @@ class ImageScanTab(_PlotTab):
         self.status = tk.StringVar(value="")
         ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
                   wraplength=int(230 * scale)).grid(row=r + 11, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self._lock_left_width()
         self._show_position()
         self.range_e.bind("<KeyRelease>", lambda e: self.redraw() if self.shown is None else None)
         self._buttons()
@@ -939,6 +961,7 @@ class LineScanTab(_PlotTab):
         self.status = tk.StringVar(value="Scans around the current position, then moves to the fitted peak.")
         ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
                   wraplength=int(230 * scale)).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self._lock_left_width()
         self.redraw()
         if self.fig is not None:  # margins are in points: recompute when the tab resizes
             self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
