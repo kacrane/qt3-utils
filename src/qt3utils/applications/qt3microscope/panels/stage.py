@@ -154,6 +154,11 @@ class StagePanel:
             return
         if event.widget.winfo_class() in TYPING_CLASSES:
             return  # typing a number, not stepping
+        w = event.widget
+        while w is not None:  # the XY micrometer box has the keys while it has focus
+            if getattr(w, "owns_arrow_keys", False):
+                return
+            w = getattr(w, "master", None)
         if not self.section.is_open:
             self.msg_var.set("Open the Stage section to step with the keys.")
             return

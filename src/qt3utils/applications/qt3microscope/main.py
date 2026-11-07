@@ -111,11 +111,11 @@ class MicroscopeWindow:
             except tk.TclError:
                 pass  # .ico only works on Windows; other systems keep the default icon
 
+        self.hub = Hub(window)  # before the body: the XY micrometer box uses it
         self._build_menu()
         self._build_status_strip()
         self._build_body()
         self._build_footer()
-        self.hub = Hub(window)
         self._attach_panels()
         window.protocol("WM_DELETE_WINDOW", self.quit)
         window.after(300, self._restore_late)
@@ -209,8 +209,18 @@ class MicroscopeWindow:
         self.sections["scope"] = scope
 
         if bottom.get("xy_micrometers", False):
-            self.xy_box = XYMicrometerBox(frame, start_locked=True)
-            self.xy_box.pack(side="right", anchor="s")
+            ms_cfg = (self.profile.get("hardware") or {}).get("microstage")
+            self.xy_box = None
+            if ms_cfg:
+                try:
+                    from qt3utils.applications.qt3microscope.panels.microstage import MicrostagePanel
+                    self.xy_box = MicrostagePanel(frame, self.hub, ms_cfg, setup=self.setup, scale=self.scale)
+                except Exception:
+                    logger.exception("XY micrometer box failed to start")
+            if self.xy_box is None:  # no hardware in the profile: layout only
+                self.xy_box = XYMicrometerBox(frame, start_locked=True)
+            # Packed before the scope so the scope's plot can never squeeze it off screen.
+            self.xy_box.pack(side="right", anchor="s", before=scope)
 
         # Log under the scope: what used to go to the terminal window. Folded
         # by default; its header counts errors and warnings.

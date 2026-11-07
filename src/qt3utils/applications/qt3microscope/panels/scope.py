@@ -1,5 +1,7 @@
 """
-Scope strip: live count rate from the photon counter (SPCM) on the NI DAQ.
+Scope strip: live count rate from the photon counter: the SPCM on the NI
+DAQ (VQLM) or the SNSPD over Ethernet (TQLM), as the profile's scope
+section says (see counters.py).
 
 Formerly qdlscope: this is the qdlscope app (renamed qt3scope) placed in the
 bottom strip of QT3 Microscope. Same controls (time per sample, raw counts,
@@ -17,6 +19,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, ttk
 
+from qt3utils.applications.qt3microscope import counters
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, RED
 
 logger = logging.getLogger(__name__)
@@ -52,7 +55,9 @@ def _qt3utils_version():
 class ScopePanel:
     def __init__(self, section, hub, cfg, set_status=None, scale=1.0):
         self.section = section
-        self.worker = hub.worker("daq")
+        # A DAQ counter shares the DAQ worker with the power panel and stage; the
+        # SNSPD is its own device, so its slow reads get their own worker.
+        self.worker = hub.worker("daq" if counters.is_daq_counter(cfg) else "counter")
         self.cfg = cfg
         self.scale = scale
         self.set_status = set_status or (lambda value, colour: None)
@@ -96,7 +101,7 @@ class ScopePanel:
         self.save_btn = tk.Button(btns, text="Save", width=7, command=self.save)
         for i, b in enumerate((self.start_btn, self.pause_btn, self.reset_btn, self.save_btn)):
             b.grid(row=i // 2, column=i % 2, padx=1, pady=1)
-        self.msg_var = tk.StringVar(value=f"SPCM on {self._source_text()}")
+        self.msg_var = tk.StringVar(value=f"{counters.detector_name(self.cfg)} on {self._source_text()}")
         ttk.Label(ctrl, textvariable=self.msg_var, foreground=GRAY, wraplength=int(230 * self.scale),
                   justify="left").grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
@@ -111,8 +116,7 @@ class ScopePanel:
         self.q_pause.pack(side="left", padx=(1, 4))
 
     def _source_text(self):
-        c = self.cfg
-        return f"{c.get('daq_name', 'Dev1')}/{c.get('signal_terminal', 'PFI0')} ({c.get('signal_counter', 'ctr2')})"
+        return counters.source_text(self.cfg)
 
     def _build_plot(self):
         try:
@@ -235,19 +239,12 @@ class ScopePanel:
         self.section.set_summary("—")
         self._init_axes()
         self._enable_buttons()
-        self.msg_var.set(f"SPCM on {self._source_text()}")
+        self.msg_var.set(f"{counters.detector_name(self.cfg)} on {self._source_text()}")
 
     # -- DAQ jobs (run on the DAQ worker thread) -----------------------------
     def _daq_start(self):
         if self.counter is None:
-            from qt3utils.hardware.nidaq.counters.nidaqtimedratecounter import NidaqTimedRateCounter
-            c = self.cfg
-            ct = c.get("clock_terminal") or None
-            self.counter = NidaqTimedRateCounter(
-                daq_name=c.get("daq_name", "Dev1"), signal_terminal=c.get("signal_terminal", "PFI0"),
-                clock_rate=int(c.get("clock_rate", 100000)), sample_time_in_seconds=self.sample_time,
-                clock_terminal=ct, read_write_timeout=float(c.get("read_write_timeout", 10)),
-                signal_counter=c.get("signal_counter", "ctr2"))
+            self.counter = counters.make_counter(self.cfg, self.sample_time)
         self.counter.start()
         self.counter.configure_sample_time(sample_time=self.sample_time)
         time.sleep(0.1)  # drain readings taken with the old sample time (as qt3scope does)
@@ -377,7 +374,7 @@ class ScopePanel:
             ds.attrs["qt3utils_version"] = _qt3utils_version()
             ds.attrs["timestamp"] = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
             ds.attrs["original_name"] = stem
-            ds.attrs["signal_source"] = "counter"
+            ds.attrs["signal_source"] = "counter" if counters.is_daq_counter(self.cfg) else "snspd"
             ds = df.create_dataset("scan_settings/sample_time", data=self.sample_time)
             ds.attrs["units"] = "seconds"
             ds.attrs["description"] = "Time that the DAQ integrates counts over."

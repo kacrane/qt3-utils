@@ -149,14 +149,9 @@ class ScanEngine:
         """The ScanController (call on the DAQ worker)."""
         if self.controller is None:
             from qt3utils.applications.qt3scan.application_controller import ScanController
-            from qt3utils.hardware.nidaq.counters.nidaqtimedratecounter import NidaqTimedRateCounter
-            c = self.counter_cfg
-            counter = NidaqTimedRateCounter(
-                daq_name=c.get("daq_name", "Dev1"), signal_terminal=c.get("signal_terminal", "PFI0"),
-                clock_rate=int(c.get("clock_rate", 100000)), sample_time_in_seconds=1,
-                clock_terminal=(c.get("clock_terminal") or None),
-                read_write_timeout=float(c.get("read_write_timeout", 10)),
-                signal_counter=c.get("signal_counter", "ctr2"))
+            from qt3utils.applications.qt3microscope.counters import make_counter
+            # The same photon counter as the scope: SPCM on the DAQ or the SNSPD.
+            counter = make_counter(self.counter_cfg, 1.0)
             self.controller = ScanController(
                 x_axis_controller=self.stage.positioner(0), y_axis_controller=self.stage.positioner(1),
                 z_axis_controller=self.stage.positioner(2), counter_controller=counter,

@@ -24,6 +24,9 @@ $app = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $Python) {
     if ($Setup -eq "VQLM") {
         $Python = "C:\Users\QT3 User Facility\qdl-utils\vqlm-home-venv\Scripts\pythonw.exe"
+    } elseif ($Setup -eq "TQLM") {
+        # The QTLM conda environment that qt3home.bat activates.
+        $Python = "C:\anaconda\files\envs\QTLM\pythonw.exe"
     } else {
         $Python = (Get-Command pythonw.exe -ErrorAction SilentlyContinue).Source
     }

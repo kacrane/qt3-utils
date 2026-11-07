@@ -1,11 +1,12 @@
 # QT3 Microscope setup profile for the TQLM.
-# Lists what the window shows. Hardware settings are added step by step.
+# Lists what the window shows and the hardware settings for each panel.
 QT3MICROSCOPE:
   setup: TQLM
   title: "QT3 Microscope — TQLM"
   geometry: 1440x900
   drawer_width: 390
 
+  # Status strip along the top, left to right.
   status:
     - {key: santec, label: "Santec"}
     - {key: superk, label: "SuperK"}
@@ -15,6 +16,7 @@ QT3MICROSCOPE:
     - {key: flippers, label: "Flippers"}
     - {key: daq, label: "DAQ"}
 
+  # Measurement tabs in the middle.
   measurements: ["Image scan", "XYZ Optimization", "Santec sweep"]
 
   # The XY micrometers (MCL MicroDrive) stay on screen next to the scope.
@@ -22,10 +24,85 @@ QT3MICROSCOPE:
     scope_label: "Scope — SNSPD"
     xy_micrometers: true
 
+  # Drawer sections, top to bottom. open: starts unfolded.
   drawer:
-    - {key: santec, label: "Santec", open: true, note: "qt3santec goes here when TQLM is ported."}
-    - {key: flippers, label: "Flip mirrors", open: true, note: "qt3mirror goes here when TQLM is ported."}
-    - {key: power, label: "Power at objective", open: true, note: "qt3power goes here when TQLM is ported."}
-    - {key: superk, label: "SuperK", open: false, note: "qt3chromatune goes here when TQLM is ported."}
-    - {key: piezo, label: "Piezo stage", open: false, note: "qt3move piezo goes here when TQLM is ported."}
-    - {key: pulseblaster, label: "Pulse Blaster", open: false, hidden: true, note: "qt3pb goes here when TQLM is ported."}
+    - {key: santec, label: "Santec", open: true, note: "qt3santec moves here in a later TQLM step. Use the qt3santec app for now."}
+    - {key: flippers, label: "Flip mirrors", open: true}
+    - {key: power, label: "Power at objective", open: true, note: "qt3power moves here in a later TQLM step. Use the qt3power app for now."}
+    - {key: superk, label: "SuperK", open: false, note: "qt3chromatune moves here in a later TQLM step."}
+    - {key: stage, label: "Stage (piezos)", open: false}
+    - {key: pulseblaster, label: "Pulse Blaster", open: false, hidden: true, note: "qt3pb moves here in a later TQLM step."}
+
+  # Hardware settings. A drawer section gets a working panel when its
+  # hardware is listed here.
+  hardware:
+    # Scope strip: the Single Quantum SNSPD over the lab LAN (same values as
+    # qt3scope_snspd.yaml). The scans use this counter too.
+    scope:
+      detector: SNSPD
+      sample_time: 0.03
+      counter:
+        import_path: qt3utils.hardware.singlequantum.websq_timed_counter
+        class_name: WebSqTimedCounter
+        configure: {host: "3.3.44.57", counts_port: 12345, control_port: 12000, detector_index: 0,
+                    auto_sync_period: true, auto_enable_detectors: false,
+                    connect_timeout: 10.0, read_timeout: 30.0}
+    # Stage drawer: the piezos in qt3scan's coordinates, -40 to 40 µm with X
+    # and Y inverted (Kendall, 2026-11-07; same values as qt3scan_snspd.yaml).
+    stage:
+      title: Piezos
+      precision: 2
+      step: 0.1
+      axes:
+        - label: X
+          import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+          class_name: NidaqPositionController
+          configure: {device_name: Dev1, write_channel: ao0, read_channel: , move_settle_time: 0.0,
+                      scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
+                      min_position: -40.0, max_position: 40.0, invert_axis: true}
+        - label: Y
+          import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+          class_name: NidaqPositionController
+          configure: {device_name: Dev1, write_channel: ao1, read_channel: , move_settle_time: 0.0,
+                      scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
+                      min_position: -40.0, max_position: 40.0, invert_axis: true}
+        - label: Z
+          import_path: qt3utils.hardware.nidaq.analogoutputs.nidaqposition
+          class_name: NidaqPositionController
+          configure: {device_name: Dev1, write_channel: ao2, read_channel: , move_settle_time: 0.0,
+                      scale_microns_per_volt: 8, zero_microns_volt_offset: 5,
+                      min_position: -40.0, max_position: 40.0, invert_axis: false}
+    # Image scan and XYZ Optimization tabs (formerly qdlscan / qt3scan).
+    scan:
+      inter_scan_settle_time: 0.01
+      image: {range: 80, pixels: 80, time: 1}
+      line: {range_xy: 3, range_z: 20, pixels: 50, time: 1}
+    # Flip mirrors (same values as the TQLM qt3mirror_base.yaml).
+    flippers:
+      device: Dev1
+      sync_pulse_low_ms: 15.0
+      sync_pulse_high_ms: 15.0
+      flippers:
+        - {name: M5, line: port0/line0}
+        - {name: M6, line: port0/line1}
+        - {name: M7, line: port0/line2}
+        - {name: M8, line: port0/line3}
+      presets:
+        - {label: "White Light", targets: {M6: up, M8: up}}
+        - {label: "Camera", targets: {M6: up, M8: down}}
+        - {label: "SNSPD", targets: {M6: down, M7: up, M8: down}}
+        - {label: "Photodiode", targets: {M6: down, M7: down, M5: up}}
+        - {label: "Spectrometer", targets: {M5: down, M6: down, M7: down}}
+    # XY micrometers (MCL MicroDrive, formerly qt3move's microstage), always
+    # on screen beside the scope. Positions in µm from the homed corner.
+    # The stage has no encoders: the last position, whether it was homed and
+    # the Lock state are kept in ~/.qt3utils/qt3microscope_microstage_TQLM.json.
+    microstage:
+      import_path: qt3utils.applications.qt3move.microstage.encoderless_wrapper
+      class_name: EncoderlessMicrostage
+      velocity: 0.5
+      step: 10
+      # Travel limits in µm. Moves outside them are clamped. The cryostat
+      # needs different limits; when its values are known they go in a second
+      # set here (open question, see the "cryostat micrometer limits" thread).
+      limits: {x_min: 0.0, x_max: 12000.0, y_min: 0.0, y_max: 12000.0}
