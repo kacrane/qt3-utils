@@ -30,6 +30,7 @@ from tkinter import filedialog, ttk
 import numpy as np
 
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
+from qt3utils.applications.qt3microscope import savedir
 from qt3utils.applications.qt3microscope.theme import C, save_figure
 
 logger = logging.getLogger(__name__)
@@ -230,7 +231,14 @@ class _PlotTab:
             self.fig = Figure(figsize=(4, 3), dpi=96 * scale)
             self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot)
             self.canvas.get_tk_widget().configure(width=int(300 * scale), height=int(220 * scale))
-            tb = NavigationToolbar2Tk(self.canvas, self.plot, pack_toolbar=False)
+            on_save = self._toolbar_save
+
+            class _Toolbar(NavigationToolbar2Tk):
+                def save_figure(self, *args):  # the disk button
+                    on_save()
+
+            tb = _Toolbar(self.canvas, self.plot, pack_toolbar=False)
+            self.toolbar = tb
             tb.update()
             tb.pack(side="bottom", fill="x")
             self.canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -314,16 +322,46 @@ class _PlotTab:
         finally:
             self.rclick.grab_release()
 
+    def _toolbar_save(self):
+        """The toolbar's disk button: the whole plot as a PNG, black on white."""
+        self._save_plot_png()
+
+    def _ask_png_path(self, default):
+        afile = filedialog.asksaveasfilename(
+            filetypes=[("PNG image", "*.png")], defaultextension=".png",
+            initialfile=default + ".png", initialdir=savedir.initial_dir())
+        if not afile:
+            return None
+        self.engine.last_save_directory = os.path.dirname(afile)
+        savedir.remember(self.engine.last_save_directory)
+        return afile
+
+    def _save_plot_png(self):
+        if self.fig is None:
+            return
+        scan = getattr(self, "shown", None)
+        stamp = scan["timestamp"].strftime("%Y%m%d_%H%M%S") if scan is not None else time.strftime("%Y%m%d_%H%M%S")
+        path = self._ask_png_path(f"plot_{stamp}")
+        if path is None:
+            return
+        try:
+            save_figure(self.fig, path, dpi=300, bbox_inches="tight", pad_inches=0.15)  # no empty margins
+            self.msg_var.set(f"Saved {os.path.basename(path)}")
+        except Exception as e:
+            logger.exception("save failed")
+            self.msg_var.set(f"Save failed: {e}")
+
     def _ask_save_path(self, prefix, scan=None):
         scan = scan or self.shown
         default = f'{prefix}{scan["id"]}_{scan["timestamp"].strftime("%Y%m%d_%H%M%S")}'
         afile = filedialog.asksaveasfilename(
             filetypes=[("Image with dataset", "*.png"), ("Dataset", "*.hdf5")],
-            initialfile=default + ".png", initialdir=self.engine.last_save_directory)
+            initialfile=default + ".png", initialdir=savedir.initial_dir())
         if not afile:
             return None
         folder, name = os.path.split(afile)
         self.engine.last_save_directory = folder
+        savedir.remember(self.engine.last_save_directory)
         stem, ext = os.path.splitext(name)
         return folder, stem, ext.lower()
 
@@ -902,6 +940,31 @@ class ImageScanTab(_PlotTab):
                 self._save_png(os.path.join(folder, stem + ".png"), scan)
             self._save_hdf5(os.path.join(folder, stem + ".hdf5"), stem, scan)
             self.msg_var.set(f"Saved {stem} in {folder}")
+        except Exception as e:
+            logger.exception("save failed")
+            self.msg_var.set(f"Save failed: {e}")
+
+    def _toolbar_save(self):
+        """The toolbar's disk button: a menu to save the scan on the left on
+        its own (like Save scan, picture only) or both plots side by side."""
+        menu = tk.Menu(self.frame, tearoff=0)
+        scan = self.shown
+        if scan is not None:
+            menu.add_command(label=f"Save scan {scan['id']} on its own as PNG…", command=lambda: self._save_one_png(scan))
+        menu.add_command(label="Save both plots side by side as PNG…", command=self._save_plot_png)
+        x, y = self.frame.winfo_pointerxy()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _save_one_png(self, scan):
+        path = self._ask_png_path(f'scan{scan["id"]}_{scan["timestamp"].strftime("%Y%m%d_%H%M%S")}')
+        if path is None:
+            return
+        try:
+            self._save_png(path, scan)
+            self.msg_var.set(f"Saved {os.path.basename(path)} (picture only; Save scan also saves the data)")
         except Exception as e:
             logger.exception("save failed")
             self.msg_var.set(f"Save failed: {e}")

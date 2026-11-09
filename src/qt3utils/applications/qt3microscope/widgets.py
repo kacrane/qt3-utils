@@ -41,12 +41,14 @@ class CollapsibleSection(tk.Frame):
     says what its instrument is doing.
     """
 
-    def __init__(self, parent, title, start_open=False, on_toggle=None, on_popout=None):
+    def __init__(self, parent, title, start_open=False, on_toggle=None, on_popout=None,
+                 back_text="↙ Back to drawer"):
         super().__init__(parent, bd=1, relief="solid")
         self._open = start_open
         self._on_toggle = on_toggle
         self.popped = False
         self.title_text = title
+        self.back_text = back_text
 
         self.header = tk.Frame(self, bg=HEADER_BG, cursor="hand2")
         self.header.pack(fill="x")
@@ -98,7 +100,7 @@ class CollapsibleSection(tk.Frame):
             self.arrow.config(text="")
             self.header.config(cursor="")
             if self.pop_btn is not None:
-                self.pop_btn.config(text="↙ Back to drawer", width=0, padx=4)
+                self.pop_btn.config(text=self.back_text, width=0, padx=4)
             self.body.pack(fill="both", expand=True)
         else:
             self.header.config(cursor="hand2")

@@ -11,11 +11,10 @@ QT3MICROSCOPE:
     - {key: santec, label: "Santec"}
     - {key: superk, label: "SuperK"}
     - {key: power, label: "P obj"}
-    - {key: counts, label: "SNSPD"}
+    - {key: counts, label: "Scope - SNSPD"}
     - {key: piezo, label: "Piezo"}
     - {key: flippers, label: "Flippers"}
     - {key: camera, label: "Camera"}
-    - {key: daq, label: "DAQ"}
 
   # Measurement tabs in the middle.
   measurements: ["Camera", "Image scan", "XYZ Optimization", "Santec sweep"]

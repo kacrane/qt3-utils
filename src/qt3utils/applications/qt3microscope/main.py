@@ -213,11 +213,21 @@ class MicroscopeWindow:
     def _build_bottom_strip(self, parent):
         bottom = self.profile.get("bottom", {})
         outer = ttk.Frame(parent)
+        # Drag bar along the top of the strip: drag up or down to change the
+        # height of the scope plot (remembered in the window state).
+        self.scope_grip = tk.Frame(outer, height=self.px(6), cursor="sb_v_double_arrow", bg=C.border)
+        self.scope_grip.pack(side="top", fill="x")
+        self.scope_grip.bind("<ButtonPress-1>", self._grip_press)
+        self.scope_grip.bind("<B1-Motion>", self._grip_drag)
+        self.scope_grip.bind("<ButtonRelease-1>", lambda e: self.save_state())
         frame = ttk.Frame(outer)  # scope, and the XY micrometers on TQLM
         frame.pack(side="top", fill="x")
+        self.scope_frame = frame
 
         scope = CollapsibleSection(frame, bottom.get("scope_label", "Scope"),
-                                   start_open=self._start_open("scope", True))
+                                   start_open=self._start_open("scope", True),
+                                   on_popout=lambda: self.toggle_popout("scope"),
+                                   back_text="↙ Back to main window")
         scope.pack(side="left", fill="x", expand=True, anchor="s")
         ttk.Label(scope.body, text="Count rate and trace go here (scope step).",
                   foreground=C.muted).pack(anchor="w", pady=30)
@@ -249,6 +259,20 @@ class MicroscopeWindow:
             logger.exception("log panel failed to start")
             ttk.Label(log.body, text=f"Could not start the log: {e}", foreground=C.red).pack(anchor="w")
         return outer
+
+    def _grip_press(self, event):
+        panel = getattr(self, "scope_panel", None)
+        self._grip_start = (event.y_root, panel.plot_height() if panel else None)
+
+    def _grip_drag(self, event):
+        y0, h0 = getattr(self, "_grip_start", (None, None))
+        panel = getattr(self, "scope_panel", None)
+        if h0 is None or panel is None or "scope" in self.popped:
+            return
+        if not self.sections["scope"].is_open:
+            self.sections["scope"].set_open(True)
+        top = max(self.px(110), int(self.window.winfo_height() * 0.75))
+        panel.set_plot_height(min(top, max(self.px(90), h0 - (event.y_root - y0))))
 
     def _build_drawer(self, parent):
         outer = ttk.Frame(parent, width=self.px(self.profile.get("drawer_width", 390)))
@@ -350,12 +374,17 @@ class MicroscopeWindow:
             # Open it just left of the drawer, the size it needs, each new one
             # a little lower than the last so they don't hide each other.
             height = sec.winfo_reqheight()
-            x = max(0, x0 - width - self.px(20))
+            x = max(0, x0 - width - self.px(20)) if key != "scope" else x0
             y = self.window.winfo_rooty() + self.px(80 + 40 * len(self.popped))
             geometry = f"{width}x{height}+{x}+{y}"
         tk_call("wm", "geometry", sec._w, geometry)
 
-        note = ttk.Frame(self.drawer_scroll.inner, padding=(8, 4), relief="solid", borderwidth=1)
+        if key == "scope":  # the placeholder stays where the scope was
+            note = ttk.Frame(self.scope_frame, padding=(8, 4), relief="solid", borderwidth=1)
+            note.pack(side="left", fill="x", expand=True, anchor="s")
+            self.scope_grip.pack_forget()
+        else:
+            note = ttk.Frame(self.drawer_scroll.inner, padding=(8, 4), relief="solid", borderwidth=1)
         ttk.Label(note, text=f"{sec.title_text}  ↗", foreground=C.muted).pack(side="left")
         ttk.Button(note, text="Bring back", command=lambda: self.pop_in(key)).pack(side="right")
         ttk.Button(note, text="Show", width=6,
@@ -377,6 +406,12 @@ class MicroscopeWindow:
             pass
         note.destroy()
         sec.set_popped(False)
+        if key == "scope":
+            sec.pack(side="left", fill="x", expand=True, anchor="s")
+            self.scope_grip.pack(side="top", fill="x", before=self.scope_frame)
+            panel = getattr(self, "scope_panel", None)
+            if panel is not None:
+                panel.set_plot_height(panel.plot_height())  # its main-window height, not the popped size
         self._repack_drawer()
         self._panel_moved(key)
         self.window.after(20, self._place_sash)
@@ -420,7 +455,7 @@ class MicroscopeWindow:
             except tk.TclError:
                 pass
         for key, geometry in (self.saved.get("popped") or {}).items():
-            if key in self.sections and key != "scope" and self.section_shown[key].get():
+            if key == "scope" or (key in self.section_shown and self.section_shown[key].get()):
                 self.pop_out(key, geometry)
 
     def _collect_state(self):
@@ -448,6 +483,11 @@ class MicroscopeWindow:
         for k in self.popped:  # back in the drawer it opens as it was before popping out
             state["open"][k] = True
         state["shown"] = {k: v.get() for k, v in self.section_shown.items()}
+        panel = getattr(self, "scope_panel", None)
+        if panel is not None and panel.plot_height():
+            state["scope_height"] = round(panel.plot_height() / self.scale)  # in 96 dpi pixels
+        elif self.saved.get("scope_height"):
+            state["scope_height"] = self.saved["scope_height"]
         state["popped"] = {k: w.tk.call("wm", "geometry", self.sections[k]._w) for k in self.popped}
         try:
             current = self.tabs.select()
@@ -493,6 +533,8 @@ class MicroscopeWindow:
                 self._clear_note("scope")
                 self.scope_panel = ScopePanel(self.sections["scope"], self.hub, hw["scope"],
                                               set_status=self._chip_setter("counts"), scale=self.scale)
+                if self.saved.get("scope_height"):
+                    self.scope_panel.set_plot_height(self.px(self.saved["scope_height"]))
             except Exception as e:
                 self._panel_failed("scope", e)
         if "laser" in self.sections and "qickdawg" in hw:

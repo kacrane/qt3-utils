@@ -10,11 +10,10 @@ QT3MICROSCOPE:
   status:
     - {key: laser, label: "Laser"}
     - {key: power, label: "P obj"}
-    - {key: counts, label: "SPCM"}
+    - {key: counts, label: "Scope - SPCM"}
     - {key: piezo, label: "Piezo"}
     - {key: flippers, label: "Flippers"}
     - {key: camera, label: "Camera"}
-    - {key: daq, label: "DAQ"}
 
   # Measurement tabs in the middle.
   # No PLE tab on the VQLM (Kendall, 2026-11-06).

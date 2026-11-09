@@ -21,13 +21,26 @@ from tkinter import filedialog, ttk
 
 from qt3utils.applications.qt3microscope import counters
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, RED
+from qt3utils.applications.qt3microscope import savedir
 from qt3utils.applications.qt3microscope.theme import C, save_figure
 
 logger = logging.getLogger(__name__)
 
 MAX_SAMPLES_TO_PLOT = 500
+DEFAULT_PLOT_HEIGHT = 190  # pixels at 96 dpi; drag the bar above the scope to change it
 MAX_ALLOWED_SAMPLES = 1_000_000  # about 3 hours at 0.01 s per sample
 CHUNK_S = 0.1  # how long one DAQ job samples before handing the DAQ back
+
+
+def format_rate_short(value, is_rate):
+    """1234567 -> '1.23 Mcts/s': three significant figures, for the status strip."""
+    unit = "cts/s" if is_rate else "cts"
+    for scale, prefix in ((1e6, "M"), (1e3, "k")):
+        if abs(value) >= scale:
+            v = value / scale
+            digits = 2 if abs(v) < 10 else (1 if abs(v) < 100 else 0)
+            return f"{v:.{digits}f} {prefix}{unit}"
+    return f"{value:.0f} {unit}"
 
 
 def format_rate(value, is_rate):
@@ -137,14 +150,50 @@ class ScopePanel:
         dpi = 96 * self.scale
         self.fig = Figure(figsize=(8, 1.9), dpi=dpi)
         self.ax = self.fig.add_subplot(111)
-        self.fig.subplots_adjust(left=0.11, right=0.99, top=0.95, bottom=0.25)
+        self._short_ylabel = False
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
-        self.canvas.get_tk_widget().configure(height=int(190 * self.scale))
+        self.canvas.get_tk_widget().configure(height=int(DEFAULT_PLOT_HEIGHT * self.scale))
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas.mpl_connect("resize_event", lambda e: self._place_axes())
         self._init_axes()
+        self._place_axes()
+
+    def set_plot_height(self, pixels):
+        """Height of the plot in screen pixels (the drag bar above the scope)."""
+        self._plot_height = int(pixels)
+        if self.fig is not None:
+            self.canvas.get_tk_widget().configure(height=self._plot_height)
+
+    def plot_height(self):
+        """The height the plot asks for in the main window (matplotlib changes the
+        widget's own height when a popped-out window is resized)."""
+        if self.fig is None:
+            return None
+        return getattr(self, "_plot_height", None) or int(DEFAULT_PLOT_HEIGHT * self.scale)
+
+    def _place_axes(self):
+        """Margins in points, not fractions, so the tick labels and axis labels
+        fit at any plot size. When the plot is too short for the full y label,
+        it shortens to the unit."""
+        if self.fig is None:
+            return
+        pt = self.fig.dpi / 72.0
+        w = self.fig.get_figwidth() * self.fig.dpi
+        h = self.fig.get_figheight() * self.fig.dpi
+        left, right, bottom, top = 62 * pt, 10 * pt, 34 * pt, 8 * pt
+        if w <= left + right + 10 or h <= bottom + top + 10:
+            return
+        self.ax.set_position([left / w, bottom / h, (w - left - right) / w, (h - bottom - top) / h])
+        # About 5 points per character at size 9, plus some room.
+        short = len("Intensity (cts/s)") * 5.2 * pt > (h - bottom - top)
+        if short != self._short_ylabel:
+            self._short_ylabel = short
+            self.ax.set_ylabel(self._ylabel(), fontsize=9)
+        self.canvas.draw_idle()
 
     def _ylabel(self):
-        return "Intensity (cts/s)" if self.get_rate else "Intensity (cts)"
+        unit = "cts/s" if self.get_rate else "cts"
+        return unit if getattr(self, "_short_ylabel", False) else f"Intensity ({unit})"
 
     def _init_axes(self):
         if self.fig is None:
@@ -314,7 +363,7 @@ class ScopePanel:
             text = format_rate(ys[-1], self.get_rate)
             self.rate_lbl.configure(text=text)
             self.section.set_summary(text)
-            self.set_status(text, GREEN)
+            self.set_status(format_rate_short(ys[-1], self.get_rate), GREEN)
         self._update_plot()
         if len(self.data_x) > MAX_ALLOWED_SAMPLES:
             self.running = False
@@ -349,12 +398,13 @@ class ScopePanel:
         default_name = f'scope_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}'
         afile = filedialog.asksaveasfilename(
             filetypes=[("Image with dataset", "*.png"), ("Dataset", "*.hdf5")],
-            initialfile=default_name + ".png", initialdir=self.last_save_directory)
+            initialfile=default_name + ".png", initialdir=savedir.initial_dir())
         if not afile:
             return
         folder, name = os.path.split(afile)
         stem, ext = os.path.splitext(name)
         self.last_save_directory = folder
+        savedir.remember(folder)
         try:
             if ext.lower() == ".png" and self.fig is not None:
                 self._update_plot(force=True)
