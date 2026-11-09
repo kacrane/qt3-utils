@@ -149,13 +149,13 @@ class LaserPanel:
                 self.section.set_summary("unknown")
                 self.set_status("?", ORANGE)
             else:
-                word = "on" if last else "off"
+                word = "ON" if last else "OFF"
                 colour = GREEN if last else GRAY
                 self.state_label.show(f"Laser: unknown, {word} last", ORANGE, colour)
                 self.section.set_summary(f"unknown, {word} last")
                 self.set_status(f"? {word} last", ORANGE, colour)
                 if when:
-                    last_note = f"Last set {word.upper()} at {when}."
+                    last_note = f"Last set {word} at {when}."
                     note = f"{note} {last_note}" if note else last_note
         if note:
             self.msg_var.set(note)

@@ -27,7 +27,8 @@ from qt3utils.applications.qt3microscope.theme import C, save_figure
 logger = logging.getLogger(__name__)
 
 MAX_SAMPLES_TO_PLOT = 500
-DEFAULT_PLOT_HEIGHT = 190  # pixels at 96 dpi; drag the bar above the scope to change it
+DEFAULT_PLOT_HEIGHT = 130  # pixels at 96 dpi; drag the bar above the scope to change it
+LABEL_PT, TICK_PT = 7, 6  # small text so the strip can be thin
 MAX_ALLOWED_SAMPLES = 1_000_000  # about 3 hours at 0.01 s per sample
 CHUNK_S = 0.1  # how long one DAQ job samples before handing the DAQ back
 
@@ -100,27 +101,29 @@ class ScopePanel:
     def _build(self, body):
         ctrl = ttk.Frame(body)
         ctrl.pack(side="left", fill="y", padx=(0, 10))
-        self.rate_lbl = tk.Label(ctrl, text="--", font=("TkDefaultFont", 20, "bold"), fg=C.reading,
+        # Compact, so the scope strip can be thin: reading, then settings on
+        # one row, the four buttons on one row, and the message.
+        self.rate_lbl = tk.Label(ctrl, text="--", font=("TkDefaultFont", 16, "bold"), fg=C.reading,
                                  width=13, anchor="w")
-        self.rate_lbl.grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(ctrl, text="Time per sample (s)").grid(row=1, column=0, sticky="w", pady=2)
-        self.sample_time_entry = ttk.Entry(ctrl, width=8)
+        self.rate_lbl.grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(ctrl, text="Time per sample (s)").grid(row=1, column=0, sticky="w")
+        self.sample_time_entry = ttk.Entry(ctrl, width=6)
         self.sample_time_entry.insert(0, f"{self.sample_time:g}")
-        self.sample_time_entry.grid(row=1, column=1, sticky="w")
+        self.sample_time_entry.grid(row=1, column=1, sticky="w", padx=(4, 0))
         self.raw_var = tk.IntVar(value=0)
         self.raw_check = ttk.Checkbutton(ctrl, text="Raw counts", variable=self.raw_var)
-        self.raw_check.grid(row=2, column=0, columnspan=2, sticky="w")
+        self.raw_check.grid(row=1, column=2, sticky="w", padx=(8, 0))
         btns = ttk.Frame(ctrl)
-        btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.start_btn = tk.Button(btns, text="Start", width=7, bg=C.go, fg="white", command=self.start)
-        self.pause_btn = tk.Button(btns, text="Pause", width=7, command=self.pause)
-        self.reset_btn = tk.Button(btns, text="Reset", width=7, command=self.reset)
-        self.save_btn = tk.Button(btns, text="Save", width=7, command=self.save)
+        btns.grid(row=2, column=0, columnspan=3, sticky="w", pady=(3, 0))
+        self.start_btn = tk.Button(btns, text="Start", width=6, bg=C.go, fg="white", command=self.start)
+        self.pause_btn = tk.Button(btns, text="Pause", width=6, command=self.pause)
+        self.reset_btn = tk.Button(btns, text="Reset", width=6, command=self.reset)
+        self.save_btn = tk.Button(btns, text="Save", width=6, command=self.save)
         for i, b in enumerate((self.start_btn, self.pause_btn, self.reset_btn, self.save_btn)):
-            b.grid(row=i // 2, column=i % 2, padx=1, pady=1)
+            b.grid(row=0, column=i, padx=1)
         self.msg_var = tk.StringVar(value=f"{counters.detector_name(self.cfg)} on {self._source_text()}")
-        ttk.Label(ctrl, textvariable=self.msg_var, foreground=GRAY, wraplength=int(230 * self.scale),
-                  justify="left").grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ttk.Label(ctrl, textvariable=self.msg_var, foreground=GRAY, wraplength=int(280 * self.scale),
+                  justify="left").grid(row=3, column=0, columnspan=3, sticky="w", pady=(3, 0))
 
         self.plot_frame = ttk.Frame(body)
         self.plot_frame.pack(side="left", fill="both", expand=True)
@@ -150,14 +153,19 @@ class ScopePanel:
         ip = sys.modules.get("IPython")
         if ip is not None and not hasattr(ip, "version_info"):
             ip.version_info = (99, 0, 0)
-        dpi = 96 * self.scale
-        self.fig = Figure(figsize=(8, 1.9), dpi=dpi)
+        # Matplotlib scales the figure for high-resolution screens itself (its
+        # device pixel ratio), so ask for 96 dpi here: 96 * scale would scale twice.
+        self.fig = Figure(figsize=(8, 1.3), dpi=96)
         self.ax = self.fig.add_subplot(111)
         self._short_ylabel = False
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
         self.canvas.get_tk_widget().configure(height=int(DEFAULT_PLOT_HEIGHT * self.scale))
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
         self.canvas.mpl_connect("resize_event", lambda e: self._place_axes())
+        # On a high-resolution screen matplotlib resizes the widget when it is
+        # first shown (device pixel ratio); put the asked-for height back.
+        tkw = self.canvas.get_tk_widget()
+        tkw.bind("<Map>", lambda e: tkw.after(50, lambda: self.set_plot_height(self.plot_height())), add="+")
         self._init_axes()
         self._place_axes()
 
@@ -183,15 +191,15 @@ class ScopePanel:
         pt = self.fig.dpi / 72.0
         w = self.fig.get_figwidth() * self.fig.dpi
         h = self.fig.get_figheight() * self.fig.dpi
-        left, right, bottom, top = 62 * pt, 10 * pt, 34 * pt, 8 * pt
+        left, right, bottom, top = 46 * pt, 8 * pt, 27 * pt, 5 * pt
         if w <= left + right + 10 or h <= bottom + top + 10:
             return
         self.ax.set_position([left / w, bottom / h, (w - left - right) / w, (h - bottom - top) / h])
         # About 5 points per character at size 9, plus some room.
-        short = len("Intensity (cts/s)") * 5.2 * pt > (h - bottom - top)
+        short = len("Intensity (cts/s)") * 0.5 * LABEL_PT * pt > (h - bottom - top)
         if short != self._short_ylabel:
             self._short_ylabel = short
-            self.ax.set_ylabel(self._ylabel(), fontsize=9)
+            self.ax.set_ylabel(self._ylabel(), fontsize=LABEL_PT)
         self.canvas.draw_idle()
 
     def _ylabel(self):
@@ -203,9 +211,9 @@ class ScopePanel:
             return
         self.ax.clear()
         self.ax.set_xlim(0, 5)
-        self.ax.set_xlabel("Time (s)", fontsize=9)
-        self.ax.set_ylabel(self._ylabel(), fontsize=9)
-        self.ax.tick_params(labelsize=8)
+        self.ax.set_xlabel("Time (s)", fontsize=LABEL_PT)
+        self.ax.set_ylabel(self._ylabel(), fontsize=LABEL_PT)
+        self.ax.tick_params(labelsize=TICK_PT)
         self.ax.grid(alpha=0.3)
         self.canvas.draw_idle()
 
@@ -222,9 +230,9 @@ class ScopePanel:
         self.ax.plot(x, y, color=C.plot_line, linewidth=1.2)
         if len(x) > 1:
             self.ax.set_xlim(x[0], x[-1])
-        self.ax.set_xlabel("Time (s)", fontsize=9)
-        self.ax.set_ylabel(self._ylabel(), fontsize=9)
-        self.ax.tick_params(labelsize=8)
+        self.ax.set_xlabel("Time (s)", fontsize=LABEL_PT)
+        self.ax.set_ylabel(self._ylabel(), fontsize=LABEL_PT)
+        self.ax.tick_params(labelsize=TICK_PT)
         self.ax.grid(alpha=0.3)
         self.canvas.draw_idle()
 
