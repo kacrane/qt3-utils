@@ -13,11 +13,12 @@ QT3MICROSCOPE:
     - {key: counts, label: "SPCM"}
     - {key: piezo, label: "Piezo"}
     - {key: flippers, label: "Flippers"}
+    - {key: camera, label: "Camera"}
     - {key: daq, label: "DAQ"}
 
   # Measurement tabs in the middle.
   # No PLE tab on the VQLM (Kendall, 2026-11-06).
-  measurements: ["Image scan", "XYZ Optimization"]
+  measurements: ["Camera", "Image scan", "XYZ Optimization"]
 
   # Strip along the bottom. VQLM micrometers are manual, so no XY box.
   bottom:
@@ -35,6 +36,16 @@ QT3MICROSCOPE:
   # Hardware settings. A drawer section gets a working panel when its
   # hardware is listed here.
   hardware:
+    # Snapshots go to the first reachable snapshot_dirs entry (default: the
+    # M drive, M:\qt3microscope_camera or \\host-m.coral.uw.edu\mhome\...),
+    # else Documents\qt3microscope_camera. Add e.g. snapshot_dirs: ['M:\my_folder'].
+    # Camera tab (qt3camera): Thorlabs CS165MU over USB, via the Thorlabs
+    # Scientific Camera SDK that comes with ThorCam (close ThorCam first).
+    # dll_dir: folder with thorlabs_tsi_camera_sdk.dll; empty tries the ThorCam folders.
+    # serial: empty uses the first Thorlabs camera found.
+    # driver: fake shows a test image instead.
+    camera: {driver: thorlabs_tsi, label: "Thorlabs CS165MU", serial: , dll_dir: ,
+             exposure_ms: 10, gain_db: 0, display_fps: 30}
     # QICK-DAWG board that switches the laser (same values as qt3laser).
     qickdawg: {host: 192.168.3.1, port: 8888, server_name: myqick, timeout_s: 10, health_check_s: 30}
     laser: {laser_gate_pmod: 0, adc_channel: 0, edge_counting: true,

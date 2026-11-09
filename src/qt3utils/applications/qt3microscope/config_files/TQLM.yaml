@@ -14,10 +14,11 @@ QT3MICROSCOPE:
     - {key: counts, label: "SNSPD"}
     - {key: piezo, label: "Piezo"}
     - {key: flippers, label: "Flippers"}
+    - {key: camera, label: "Camera"}
     - {key: daq, label: "DAQ"}
 
   # Measurement tabs in the middle.
-  measurements: ["Image scan", "XYZ Optimization", "Santec sweep"]
+  measurements: ["Camera", "Image scan", "XYZ Optimization", "Santec sweep"]
 
   # The XY micrometers (MCL MicroDrive) stay on screen next to the scope.
   bottom:
@@ -36,6 +37,12 @@ QT3MICROSCOPE:
   # Hardware settings. A drawer section gets a working panel when its
   # hardware is listed here.
   hardware:
+    # Snapshots go to the first reachable snapshot_dirs entry (default: the
+    # M drive, M:\qt3microscope_camera or \\host-m.coral.uw.edu\mhome\...),
+    # else Documents\qt3microscope_camera. Add e.g. snapshot_dirs: ['M:\my_folder'].
+    # Camera tab (qt3camera): NIT SWIR camera (NSC2001 sensor) over USB.
+    # The NIT driver is not written yet; driver: fake shows a test image.
+    camera: {driver: nit, label: "NIT SWIR camera", display_fps: 30}
     # Scope strip: the Single Quantum SNSPD over the lab LAN (same values as
     # qt3scope_snspd.yaml). The scans use this counter too.
     scope:

@@ -53,6 +53,7 @@ class MicrostagePanel(ttk.Frame):
         self.locked = bool(saved.get("locked", True))  # first launch: locked
         self._saved = saved
 
+        self.scale = scale
         self._build()
         self._refresh()
         self.bind("<Button-1>", lambda e: self.focus_set(), add="+")
@@ -62,11 +63,14 @@ class MicrostagePanel(ttk.Frame):
 
     # -- layout --------------------------------------------------------------
     def _build(self):
+        scale = self.scale
         top = ttk.Frame(self)
         top.pack(fill="x")
         ttk.Label(top, text="XY micrometers", font=("TkDefaultFont", 10, "bold")).pack(side="left")
         self.lock_btn = tk.Button(top, width=10, command=self.toggle_lock, font=("TkDefaultFont", 9, "bold"))
         self.lock_btn.pack(side="right")
+        # Shown only when the stage could not be connected.
+        self.connect_btn = ttk.Button(top, text="Connect", width=8, command=self._connect)
         self.state_lbl = tk.Label(top, text="Connecting...", fg=GRAY)
         self.state_lbl.pack(side="right", padx=8)
 
@@ -110,7 +114,7 @@ class MicrostagePanel(ttk.Frame):
         self.keys_chk = ttk.Checkbutton(bottom, text="Arrow keys (click this box first)", variable=self.keys_var)
         self.keys_chk.pack(side="left")
         self.move_widgets.append(self.keys_chk)
-        self.note = ttk.Label(self, foreground="#555555")
+        self.note = ttk.Label(self, foreground="#555555", wraplength=int(380 * scale), justify="left")
         self.note.pack(anchor="w", pady=(2, 0))
         lim = self.limits
         if lim:
@@ -177,6 +181,8 @@ class MicrostagePanel(ttk.Frame):
     # -- hardware (jobs run on the microstage worker) ---------------------------
     def _connect(self):
         saved = self._saved
+        self.connect_btn.pack_forget()
+        self.state_lbl.configure(text="Connecting...", fg=GRAY)
 
         def job():
             mod = importlib.import_module(self.cfg.get(
@@ -197,7 +203,13 @@ class MicrostagePanel(ttk.Frame):
             return
         if not ok:
             self.state_lbl.configure(text="Not connected", fg=RED)
-            self.note.configure(text=f"Could not connect: {result}")
+            text = f"Could not connect: {result}"
+            if "-8" in str(result) or "Invalid Handle" in str(result):
+                # MCL_InitHandle found no free Micro-Drive: another program has it.
+                text = ("Could not connect: the stage is in use or unplugged. Close qt3move "
+                        "(and any other QT3 Microscope), then press Connect.")
+            self.note.configure(text=text)
+            self.connect_btn.pack(side="right", padx=4, before=self.state_lbl)
             logger.warning("XY micrometers: could not connect: %r", result)
             return
         self.stage, restored, pos = result

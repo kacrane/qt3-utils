@@ -5,7 +5,7 @@ A status strip along the top, measurement tabs in the middle, a scope
 strip along the bottom and a folding instrument drawer on the right.
 Instruments are added step by step: laser and power (step 2), the scope
 strip, formerly qdlscope (step 3), and the stage, formerly qdlmove, and
-flip mirrors (step 4). A drawer section without a panel yet says which
+flip mirrors (step 4), and the Camera tab (qt3camera). A drawer section without a panel yet says which
 later step fills it in.
 All hardware calls go through the instrument hub (hub.py): one worker
 thread per device, so a slow device never freezes the window.
@@ -517,6 +517,34 @@ class MicroscopeWindow:
                 except Exception as e:
                     self._panel_failed(key, e)
         self._attach_scan_tabs(hw)
+        self._attach_camera_tab(hw)
+
+    def _attach_camera_tab(self, hw):
+        """Camera tab (qt3camera): live view from the setup's camera."""
+        if "Camera" not in self.tab_pages or "camera" not in hw:
+            return
+        page = self.tab_pages["Camera"]
+        try:
+            from qt3utils.applications.qt3microscope.panels.camera import CameraTab
+            for child in page.winfo_children():
+                child.destroy()
+            self.camera_tab = CameraTab(page, hw["camera"], setup=self.setup,
+                                        stage=getattr(self, "stage_panel", None),
+                                        set_status=self._chip_setter("camera"),
+                                        scale=self.scale, hub=self.hub)
+        except Exception as e:
+            logger.exception("camera tab failed to start")
+            self._tab_failed("Camera", e)
+            return
+        # Live view pauses while another tab is in front and resumes on return.
+        def on_tab(_event=None):
+            try:
+                shown = self.tabs.select() == str(page)
+            except tk.TclError:
+                return
+            self.camera_tab.set_visible(shown)
+        self.tabs.bind("<<NotebookTabChanged>>", on_tab, add="+")
+        self.window.after(100, on_tab)
 
     def _attach_scan_tabs(self, hw):
         """Image scan and XYZ Optimization tabs (formerly qdlscan's image and line
