@@ -30,7 +30,7 @@ from tkinter import filedialog, ttk
 import numpy as np
 
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
-from qt3utils.applications.qt3microscope import savedir
+from qt3utils.applications.qt3microscope import counters, savedir
 from qt3utils.applications.qt3microscope.theme import C, save_figure
 
 logger = logging.getLogger(__name__)
@@ -774,6 +774,10 @@ class ImageScanTab(_PlotTab):
         if ok:
             scan["data_z"][i] = result
             scan["index"] = i + 1
+            # First row all 0 counts almost always means the detector is off.
+            if not (i == 0 and counters.warn_if_no_counts(self.frame, result, self.engine.counter_cfg,
+                                                          "image scan")):
+                counters.clear_no_counts_warning(result)
             if self.shown is scan or self.pinned is scan:
                 self.redraw()
             self._gallery_update(scan)
@@ -1099,6 +1103,9 @@ class LineScanTab(_PlotTab):
                 pass
             return
         scan["data_y"] = np.asarray(result, dtype=float) / scan["time_per_pixel"]
+        if not counters.warn_if_no_counts(self.frame, scan["data_y"], self.engine.counter_cfg,
+                                          f"{scan['axis'].upper()} scan"):
+            counters.clear_no_counts_warning(scan["data_y"])
         final, fitted = gaussian_peak(scan["data_x"], scan["data_y"], scan["start_position_axis"],
                                       scan["min_position"], scan["max_position"])
         scan["final_position_axis"] = final

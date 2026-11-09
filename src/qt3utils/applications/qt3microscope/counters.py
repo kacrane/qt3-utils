@@ -65,3 +65,88 @@ def source_text(cfg):
         return where or spec["class_name"]
     c = cfg or {}
     return f"{c.get('daq_name', 'Dev1')}/{c.get('signal_terminal', 'PFI0')} ({c.get('signal_counter', 'ctr2')})"
+
+
+_warning = {"win": None}  # the open "no counts" window, if any
+
+
+def _has_counts(values):
+    import numpy as np
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    return v.size > 0 and bool(np.any(v != 0))
+
+
+def warn_if_no_counts(widget, values, cfg, what="scan"):
+    """A first read of exactly 0 counts almost always means the detector is
+    off (Kendall, 2026-11-09). Opens a warning window (the measurement keeps
+    running) and logs it; clear_no_counts_warning() closes the window once
+    counts come in. Returns True when it warned. Only for profiles whose
+    scope section sets warn_zero_counts: true (the VQLM SPCM)."""
+    if not (cfg or {}).get("warn_zero_counts", False):
+        return False
+    try:
+        import numpy as np
+        v = np.asarray(values, dtype=float)
+        if v[np.isfinite(v)].size == 0 or _has_counts(values):
+            return False
+    except Exception:
+        return False
+    name = detector_name(cfg)
+    text = (f"The {name} read 0 counts at the start of this {what}. Check that the {name} is "
+            f"switched on, and that the flip mirrors send the light to it.")
+    print(f"WARNING: {text}")
+    widget.after(10, lambda: _show(widget, f"No counts from the {name}", text))  # not inside the data callback
+    return True
+
+
+def _show(widget, title, text):
+    import tkinter as tk
+    from tkinter import ttk
+    win = _warning["win"]
+    try:
+        if win is not None and win.winfo_exists():
+            win.msg.configure(text=text)
+            win.lift()
+            return
+    except tk.TclError:
+        pass
+    try:
+        top = widget.winfo_toplevel()
+        win = tk.Toplevel(top)
+        win.title(title)
+        win.transient(top)
+        win.resizable(False, False)
+        scale = max(1.0, win.winfo_fpixels("1i") / 96.0)
+        body = ttk.Frame(win, padding=int(14 * scale))
+        body.pack(fill="both", expand=True)
+        win.msg = ttk.Label(body, text=text, wraplength=int(360 * scale), justify="left")
+        win.msg.pack(anchor="w")
+        ttk.Label(body, text="This closes by itself once counts come in.",
+                  wraplength=int(360 * scale), justify="left").pack(anchor="w", pady=(int(6 * scale), 0))
+        ttk.Button(body, text="OK", command=win.destroy).pack(anchor="e", pady=(int(10 * scale), 0))
+        win.update_idletasks()
+        x = top.winfo_rootx() + (top.winfo_width() - win.winfo_reqwidth()) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - win.winfo_reqheight()) // 3
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        _warning["win"] = win
+    except tk.TclError:
+        pass
+
+
+def clear_no_counts_warning(values):
+    """Close the "no counts" window once a read is not all zeros."""
+    win = _warning["win"]
+    if win is None:
+        return
+    try:
+        if not _has_counts(values):
+            return
+    except Exception:
+        return
+    _warning["win"] = None
+    try:
+        win.destroy()
+        print("Counts are coming in again; the no-counts warning closed.")
+    except Exception:
+        pass

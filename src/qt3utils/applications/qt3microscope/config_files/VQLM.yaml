@@ -51,8 +51,10 @@ QT3MICROSCOPE:
             high_threshold: 8000, low_threshold: 500, relax_delay_tns: 50}
     # Scope strip: SPCM on a DAQ counter (formerly qdlscope; same values
     # as its qdlscope_base.yaml). sample_time is the starting time per sample.
+    # warn_zero_counts: a first read of 0 counts at the start of a scan or the
+    # scope shows a "is the SPCM on?" warning.
     scope: {daq_name: Dev1, signal_terminal: PFI0, signal_counter: ctr2, clock_rate: 100000,
-            clock_terminal: "", read_write_timeout: 10, sample_time: 0.01}
+            clock_terminal: "", read_write_timeout: 10, sample_time: 0.01, warn_zero_counts: true}
     # Photodetector(s) on the NI DAQ. v_to_mw is a polynomial in volts,
     # highest power first; this is the VQLM qt3power quadratic.
     power:

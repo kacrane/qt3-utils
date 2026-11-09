@@ -263,6 +263,7 @@ class ScopePanel:
             self.get_rate = not bool(self.raw_var.get())
             self._init_axes()
         self.running = True
+        self._zero_checked = False  # warn if the first read is 0 counts
         self._set_buttons(start=False, pause=True, reset=False, save=False, settings=False)
         self.msg_var.set("Starting...")
         self._job_out = True
@@ -363,6 +364,10 @@ class ScopePanel:
             self.worker.submit("scope stop", self._daq_stop, quiet=True)
             return
         xs, ys = result
+        if ys:
+            first, self._zero_checked = not self._zero_checked, True
+            if not (first and counters.warn_if_no_counts(self.plot_frame, ys, self.cfg, "scope run")):
+                counters.clear_no_counts_warning(ys)
         self.data_x.extend(xs)
         self.data_y.extend(ys)
         if ys:
