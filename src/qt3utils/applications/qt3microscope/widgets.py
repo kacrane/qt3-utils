@@ -22,15 +22,30 @@ class StatusChip(tk.Frame):
 
     def __init__(self, parent, label):
         super().__init__(parent, bd=1, relief="groove", padx=6, pady=2)
-        self.dot = tk.Label(self, text="●", fg=GRAY)
-        self.dot.pack(side="left")
+        # The dot is drawn, so it can be split in two colours (e.g. laser
+        # state unknown, last known ON: half yellow, half green).
+        size = int(round(11 * max(1.0, self.winfo_fpixels("1i") / 96.0)))
+        self.dot = tk.Canvas(self, width=size, height=size, highlightthickness=0, bd=0, bg=self.cget("bg"))
+        self.dot.pack(side="left", padx=(0, 2))
+        self._size = size
         tk.Label(self, text=label).pack(side="left")
         self.value = tk.Label(self, text="—", font=("TkDefaultFont", 9, "bold"))
         self.value.pack(side="left", padx=(4, 0))
+        self._draw(GRAY)
 
-    def set(self, value, colour=GRAY):
+    def _draw(self, colour, colour2=None):
+        d, m = self._size, 1
+        self.dot.delete("all")
+        if colour2 is None:
+            self.dot.create_oval(m, m, d - m, d - m, fill=colour, outline="")
+        else:  # split along the diagonal, like the laser banner's stripes
+            self.dot.create_arc(m, m, d - m, d - m, start=45, extent=180, fill=colour, outline="", style="pieslice")
+            self.dot.create_arc(m, m, d - m, d - m, start=225, extent=180, fill=colour2, outline="", style="pieslice")
+
+    def set(self, value, colour=GRAY, colour2=None):
+        """colour2: a second colour for the other half of the dot."""
         self.value.config(text=value)
-        self.dot.config(fg=colour)
+        self._draw(colour, colour2)
 
 
 class CollapsibleSection(tk.Frame):

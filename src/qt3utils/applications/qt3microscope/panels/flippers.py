@@ -128,7 +128,11 @@ class FlippersPanel:
         pf.pack(fill="x")
         self.preset_btns = []
         for j, pr in enumerate(self.cfg.presets):
-            b = ttk.Button(pf, text=pr.label, command=lambda pr=pr: self._do(pr.label, "apply_partial", pr.targets_dict()))
+            # tk buttons, so the preset the mirrors are in now can be coloured.
+            b = tk.Button(pf, text=pr.label, command=lambda pr=pr: self._do(pr.label, "apply_partial", pr.targets_dict()))
+            b.preset_targets = pr.targets_dict()
+            b.normal_look = {"bg": b.cget("bg"), "fg": b.cget("fg"), "font": b.cget("font"),
+                             "activebackground": b.cget("activebackground")}
             b.grid(row=j // 2, column=j % 2, sticky="ew", padx=1, pady=1)
             self.preset_btns.append(b)
         pf.columnconfigure(0, weight=1)
@@ -158,6 +162,7 @@ class FlippersPanel:
                 lbl.configure(text="—", bg=self._idle_bg, fg=C.text)
             else:
                 lbl.configure(text="UP" if lv else "DOWN", bg=GREEN if lv else GRAY, fg="white")
+        self._show_active_preset(levels)
         if self._connected():
             summary = self._last_action or "connected"
             self.section.set_summary(summary)
@@ -165,6 +170,19 @@ class FlippersPanel:
         else:
             self.section.set_summary("not connected")
             self.set_status("off", GRAY)
+
+    def _show_active_preset(self, levels):
+        """Colour the preset buttons whose mirrors all match the levels now."""
+        for b in self.preset_btns:
+            targets = getattr(b, "preset_targets", None) or {}
+            active = (self._connected() and bool(targets)
+                      and all(i < len(levels) and levels[i] is not None and bool(levels[i]) == bool(v)
+                              for i, v in targets.items()))
+            if active:
+                b.configure(bg=C.accent, fg="#000000" if C.dark else "white", activebackground=C.accent,
+                            font=("TkDefaultFont", 9, "bold"))
+            else:
+                b.configure(**b.normal_look)
 
     # -- actions -----------------------------------------------------------
     def connect(self):
