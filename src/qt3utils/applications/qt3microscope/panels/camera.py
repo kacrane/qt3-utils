@@ -16,13 +16,14 @@ zoomed, checked against the crosshair or saved), exposure and gain (box,
 slider, or mouse wheel over either; Shift for finer steps), auto exposure
 (software: keeps the brightest pixels near 60% of full scale), auto or
 fixed contrast, saturated pixels in red, crosshair, zoom (mouse wheel,
-drag to pan, Fit), Snapshot (16-bit TIFF plus a .json with exposure, gain
-and piezo position; to the M drive when it is reachable, else
-Documents/qt3microscope_camera, unless a folder was picked with Folder…), and Release (next to Snapshot), which lets ThorCam (or the NIT
+drag to pan, Fit), Snapshot (a PNG as shown on screen, the raw camera counts as a
+16-bit _raw.tif, and a .json with exposure, gain and piezo position; to the M drive when it is reachable, else
+Documents/qt3microscope_camera, unless a folder was picked with Folder…), crosshair and/or a
+reticle circle of adjustable diameter (Shift+click or right-click moves them), and Release (next to Snapshot), which lets ThorCam (or the NIT
 software) open the camera while QT3 Microscope stays open.
 
 The camera is opened at the first Play, not at launch. Leaving the tab
-pauses live view; coming back resumes it.
+pauses live view; it stays paused until Play is pressed again.
 """
 
 import datetime
@@ -37,7 +38,7 @@ from tkinter import filedialog, ttk
 
 import numpy as np
 
-from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
+from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED, ToolTip
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ class CameraTab:
         self.shown_index = None
         self.frozen = None           # frame shown (newest or paused)
         self.zoom = None             # display px per image px; None = fit
-        self.centre = None           # (x, y) image coords at the canvas centre
+        self.center = None           # (x, y) image coords at the canvas center
         self._drag = None
         self._photo = None
         self._dirty = True
@@ -226,12 +227,16 @@ class CameraTab:
         self.v_lo = tk.StringVar(value=str(st.get("lo", 0)))
         self.v_hi = tk.StringVar(value=str(st.get("hi", 4095)))
         self.v_cross = tk.BooleanVar(value=st.get("crosshair", True))
+        # Crosshair/reticle center in camera pixels; None = image center.
+        self.mark = tuple(st["mark"]) if isinstance(st.get("mark"), list) else None
+        self.v_reticle = tk.BooleanVar(value=st.get("reticle", False))
+        self.v_reticle_px = tk.StringVar(value=f"{float(st.get('reticle_px', 100)):g}")
         self.v_sat = tk.BooleanVar(value=st.get("show_saturated", True))
         # A folder picked with Folder… sticks; otherwise the M drive if reachable.
         self.user_dir = st.get("user_save_dir") or self.cfg.get("save_dir")
         self.dir_candidates = self.cfg.get("snapshot_dirs") or M_DRIVE_DIRS
         self.save_dir = self._current_save_dir()
-        self.v_msg = tk.StringVar(value="Press Play to start live view. Mouse wheel zooms, drag pans.")
+        self.v_msg = tk.StringVar(value="Press Play for live view. Wheel zooms, drag pans, Shift+click or right-click moves the crosshair.")
         self.v_readout = tk.StringVar(value="")
         self.v_cursor = tk.StringVar(value="")
         self.v_camera = tk.StringVar(value=self.cfg.get("label") or self.cfg.get("driver", "camera"))
@@ -259,7 +264,12 @@ class CameraTab:
         self.play_btn.pack(side="left")
         tk.Button(top, text="Snapshot", font=("TkDefaultFont", 10), command=self.snapshot).pack(
             side="left", padx=(6, 0), fill="y")
-        ttk.Button(top, text="Release", width=8, command=self.release).pack(side="left", padx=(6, 0), fill="y")
+        release_btn = ttk.Button(top, text="Release", width=8, command=self.release)
+        release_btn.pack(side="left", padx=(6, 0), fill="y")
+        ToolTip(release_btn, "Disconnect from the camera so ThorCam (or another program) can open it. "
+                             "Only one program can use the camera at a time. "
+                             "Close the other program, then press Play to reconnect.",
+                wraplength=self.px(320))
 
         g = ttk.LabelFrame(left, text="Camera", padding=6)
         g.pack(fill="x", pady=4)
@@ -273,7 +283,8 @@ class CameraTab:
         g.columnconfigure(1, weight=1)
         ttk.Checkbutton(g, text="Auto exposure", variable=self.v_autoexp,
                         command=self._autoexp_changed).grid(row=6, column=0, columnspan=2, sticky="w")
-        ttk.Label(g, text="Exposure (ms)").grid(row=0, column=0, sticky="w")
+        self.exp_label = ttk.Label(g, text="Exposure (ms)")
+        self.exp_label.grid(row=0, column=0, sticky="w")
         self.exp_entry = ttk.Entry(g, textvariable=self.v_exposure, width=9)
         self.exp_entry.grid(row=0, column=1, sticky="e", padx=4, pady=2)
         self.exp_slider = ttk.Scale(g, orient="horizontal", from_=0.0, to=1.0,
@@ -293,6 +304,8 @@ class CameraTab:
                 widget.bind("<MouseWheel>", lambda e, w=what: self._wheel_value(w, e))
                 widget.bind("<Button-4>", lambda e, w=what: self._wheel_value(w, e, +1))
                 widget.bind("<Button-5>", lambda e, w=what: self._wheel_value(w, e, -1))
+        self.exp_unit = "ms"
+        self._put("exposure", float(self.cfg.get("exposure_ms", 10.0)))
         self._sync_sliders()
         self.range_lbl = ttk.Label(g, text="", foreground="#555555", wraplength=self.px(210), justify="left")
         self.range_lbl.grid(row=4, column=0, columnspan=2, sticky="w")
@@ -316,18 +329,47 @@ class CameraTab:
 
         v = ttk.LabelFrame(left, text="View", padding=6)
         v.pack(fill="x", pady=4)
-        ttk.Checkbutton(v, text="Crosshair", variable=self.v_cross, command=self._view_changed).grid(
-            row=0, column=0, columnspan=3, sticky="w")
-        ttk.Button(v, text="Fit", width=5, command=self.fit).grid(row=1, column=0, pady=2)
-        ttk.Button(v, text="1:1", width=5, command=lambda: self.set_zoom(1.0)).grid(row=1, column=1, padx=2)
-        ttk.Button(v, text="2×", width=5, command=lambda: self.set_zoom(2.0)).grid(row=1, column=2)
+        cross_check = ttk.Checkbutton(v, text="Crosshair", variable=self.v_cross, command=self._mark_changed)
+        cross_check.grid(row=0, column=0, columnspan=2, sticky="w")
+        center_btn = ttk.Button(v, text="Center", width=7, command=self.center_mark)
+        center_btn.grid(row=0, column=2, columnspan=2, sticky="e")
+        move_tip = ("Move the crosshair and reticle: Shift+click or Shift+drag on the image, "
+                    "or right-click the image and choose \"Move crosshair/reticle here\". "
+                    "Center puts them back in the middle of the image.")
+        ToolTip(cross_check, move_tip, wraplength=self.px(320))
+        ToolTip(center_btn, move_tip, wraplength=self.px(320))
+        self.reticle_check = ttk.Checkbutton(v, text="Reticle", variable=self.v_reticle,
+                                             command=self._reticle_toggled)
+        self.reticle_check.grid(row=1, column=0, sticky="w")
+        self.reticle_lbl = ttk.Label(v, text="diameter (px)")
+        self.reticle_lbl.grid(row=1, column=1, columnspan=2, sticky="e")
+        self.reticle_entry = ttk.Entry(v, textvariable=self.v_reticle_px, width=6)
+        self.reticle_entry.grid(row=1, column=3, sticky="e", pady=2)
+        self.reticle_entry.bind("<Return>", lambda _e: self._reticle_typed())
+        self.reticle_entry.bind("<KP_Enter>", lambda _e: self._reticle_typed())
+        # Diameter slider (logarithmic, 4-1000 px); the mouse wheel works over
+        # the box, the slider and the checkbox.
+        self.reticle_slider = ttk.Scale(v, orient="horizontal", from_=0.0, to=1.0,
+                                        command=self._reticle_slid)
+        self.reticle_slider.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(0, 4))
+        v.columnconfigure(0, weight=1)
+        for widget in (self.reticle_entry, self.reticle_slider):
+            widget.bind("<MouseWheel>", self._wheel_reticle)
+            widget.bind("<Button-4>", lambda e: self._wheel_reticle(e, +1))
+            widget.bind("<Button-5>", lambda e: self._wheel_reticle(e, -1))
+        self._sync_reticle_slider()
+        self._show_reticle_controls()
+        zoom_row = ttk.Frame(v)
+        zoom_row.grid(row=4, column=0, columnspan=4, sticky="w", pady=2)
+        ttk.Button(zoom_row, text="Fit", width=5, command=self.fit).pack(side="left")
+        ttk.Button(zoom_row, text="1:1", width=5, command=lambda: self.set_zoom(1.0)).pack(side="left", padx=2)
+        ttk.Button(zoom_row, text="2×", width=5, command=lambda: self.set_zoom(2.0)).pack(side="left")
 
         s = ttk.LabelFrame(left, text="Snapshots go to", padding=6)
         s.pack(fill="x", pady=4)
         self.dir_lbl = ttk.Label(s, text=self._short(self.save_dir), foreground="#555555", width=20)
         self.dir_lbl.pack(side="left")
-        ttk.Button(s, text="Default", width=8, command=self.use_default_dir).pack(side="right")
-        ttk.Button(s, text="Folder…", width=8, command=self.choose_dir).pack(side="right", padx=(0, 4))
+        ttk.Button(s, text="Folder…", width=8, command=self.choose_dir).pack(side="right")
 
         self.canvas = tk.Canvas(right, bg="#202020", highlightthickness=0)
         self.canvas.pack(side="top", fill="both", expand=True)
@@ -343,6 +385,9 @@ class CameraTab:
         cv.bind("<MouseWheel>", self._on_wheel)                       # Windows
         cv.bind("<Button-4>", lambda e: self._on_wheel(e, +1))       # Linux
         cv.bind("<Button-5>", lambda e: self._on_wheel(e, -1))
+        cv.bind("<Shift-ButtonPress-1>", self._mark_at)
+        cv.bind("<Shift-B1-Motion>", self._mark_at)
+        cv.bind("<ButtonPress-3>", self._context_menu)
         cv.bind("<ButtonPress-1>", self._drag_start)
         cv.bind("<B1-Motion>", self._drag_move)
         cv.bind("<ButtonRelease-1>", lambda _e: setattr(self, "_drag", None))
@@ -363,13 +408,12 @@ class CameraTab:
             self.stream.send("play")
 
     def set_visible(self, visible):
-        """Called when the Camera tab is shown or hidden: pause while hidden."""
+        """Called when the Camera tab is shown or hidden: leaving it pauses the camera."""
         self.visible = visible
         if not visible and self.playing:
+            # Stays paused on return (Kendall): press Play to go live again.
+            self.want_play = False
             self.stream.send("pause")
-            self.want_play = True
-        elif visible and self.want_play and not self.playing:
-            self.stream.send("play")
         if visible:
             self._dirty = True
 
@@ -381,6 +425,25 @@ class CameraTab:
             return None
 
     # ----- exposure and gain: box, slider, mouse wheel -----
+    def _get(self, what):
+        """Value in the box, in ms for exposure (the box may be in s) or dB for gain."""
+        v = self._float(self._var(what).get())
+        if v is not None and what == "exposure" and getattr(self, "exp_unit", "ms") == "s":
+            v *= 1000.0
+        return v
+
+    def _put(self, what, value):
+        """Show a value (ms for exposure); exposure of 1 s or more shows in seconds,
+        and the label beside the box says which."""
+        if what != "exposure":
+            self._var(what).set(self._fmt(what, value))
+            return
+        unit = "s" if value >= 1000.0 else "ms"
+        if unit != getattr(self, "exp_unit", None):
+            self.exp_unit = unit
+            self.exp_label.config(text=f"Exposure ({unit})")
+        self.v_exposure.set(f"{value / 1000.0:.4g}" if unit == "s" else self._fmt("exposure", value))
+
     def _var(self, what):
         return self.v_exposure if what == "exposure" else self.v_gain
 
@@ -410,7 +473,7 @@ class CameraTab:
         for what, slider in (("exposure", self.exp_slider), ("gain", self.gain_slider)):
             if time.time() - self._touched[what] < 0.5:
                 continue
-            value = self._float(self._var(what).get())
+            value = self._get(what)
             if value is not None:
                 self._setting_slider = True
                 slider.set(self._to_slider(what, value))
@@ -424,7 +487,7 @@ class CameraTab:
         if what == "exposure" and self.v_autoexp.get():
             return
         self._touched[what] = time.time()
-        self._var(what).set(self._fmt(what, self._from_slider(what, x)))
+        self._put(what, self._from_slider(what, x))
         self._apply_soon(what)
 
     def _wheel_value(self, what, event, direction=None):
@@ -435,7 +498,7 @@ class CameraTab:
         if direction is None:
             direction = 1 if event.delta > 0 else -1
         fine = bool(event.state & 0x0001)  # Shift held
-        value = self._float(self._var(what).get())
+        value = self._get(what)
         if value is None:
             value = self._from_slider(what, 0.5)
         if what == "exposure":
@@ -443,7 +506,7 @@ class CameraTab:
         else:
             value += (0.1 if fine else 1.0) * direction
         value = self._clamp(what, value)
-        self._var(what).set(self._fmt(what, value))
+        self._put(what, value)
         self._touched[what] = 0.0
         self._sync_sliders()
         self._touched[what] = time.time()
@@ -451,11 +514,11 @@ class CameraTab:
         return "break"  # don't also scroll anything underneath
 
     def _typed(self, what):
-        value = self._float(self._var(what).get())
+        value = self._get(what)
         if value is None:
             self.v_msg.set(f"{what.capitalize()} must be a number.")
             return
-        self._var(what).set(self._fmt(what, self._clamp(what, value)))
+        self._put(what, self._clamp(what, value))
         self._touched[what] = 0.0
         self._sync_sliders()
         self._apply(what)
@@ -477,7 +540,7 @@ class CameraTab:
         f = self.frozen
         if f is None or f.time < self._autoexp_wait_until:
             return
-        exp = self._float(self.v_exposure.get())
+        exp = self._get("exposure")
         if exp is None:
             return
         level = float(np.percentile(f.image[::4, ::4], 99.9)) / self.full_scale
@@ -490,7 +553,7 @@ class CameraTab:
         new = self._clamp("exposure", exp * min(max(ratio, 0.25), 4.0))
         if abs(new - exp) / exp < 0.01:  # at the end of the range
             return
-        self.v_exposure.set(self._fmt("exposure", new))
+        self._put("exposure", new)
         self._touched["exposure"] = 0.0
         self._sync_sliders()
         self.stream.send("exposure", new)
@@ -504,7 +567,7 @@ class CameraTab:
 
     def _apply(self, what):
         self._apply_job[what] = None
-        value = self._float(self._var(what).get())
+        value = self._get(what)
         if value is not None:
             self.stream.send(what, value)
             self._save_state()
@@ -544,19 +607,19 @@ class CameraTab:
                     self.full_scale = 2 ** self.bit_depth - 1
                     name = f"{self.info.get('model', '')}  {self.info.get('serial') or ''}".strip()
                     self.v_camera.set(name)
-                    self.v_exposure.set(self._fmt("exposure", val["exposure"]))
+                    self._put("exposure", val["exposure"])
                     lo, hi = val["exposure_range"]
                     self.exp_range = (lo, hi)
-                    text = f"{lo:.3g}–{hi:.4g} ms"
+                    text = f"Exposure {self._time_text(lo)} to {self._time_text(hi)}"
                     if val["gain_range"]:
                         g0, g1 = val["gain_range"]
                         self.gain_range = (g0, g1)
-                        text += f",  {g0:.3g}–{g1:.3g} dB"
+                        text += f"\nGain {g0:.3g} to {g1:.3g} dB"
                         self.v_gain.set(self._fmt("gain", val["gain"]))
                         self.gain_entry.config(state="normal")
                         self.gain_slider.state(["!disabled"])
                     else:
-                        text += ", no gain setting"
+                        text += "\nNo gain setting"
                         self.v_gain.set("—")
                         self.gain_entry.config(state="disabled")
                         self.gain_slider.state(["disabled"])
@@ -578,7 +641,7 @@ class CameraTab:
                         self.set_status("paused", GRAY)
                 elif kind == "exposure":
                     if time.time() - self._touched["exposure"] > 0.5 or self.v_autoexp.get():
-                        self.v_exposure.set(self._fmt("exposure", val))
+                        self._put("exposure", val)
                         self._sync_sliders()
                     if not self.v_autoexp.get():
                         self.v_msg.set(f"Exposure {self._fmt('exposure', val)} ms.")
@@ -639,7 +702,7 @@ class CameraTab:
 
     def fit(self):
         self.zoom = None
-        self.centre = None
+        self.center = None
         self._dirty = True
 
     def set_zoom(self, z, about=None):
@@ -649,16 +712,16 @@ class CameraTab:
         fitz = self._fit_zoom(self.frozen.image)
         old = self.zoom or fitz
         z = min(max(z, fitz), 32.0)
-        if self.centre is None:
-            self.centre = (w / 2, h / 2)
+        if self.center is None:
+            self.center = (w / 2, h / 2)
         if about is not None:  # keep the image point under the mouse in place
             cw, ch = self.canvas.winfo_width(), self.canvas.winfo_height()
-            ix = self.centre[0] + (about[0] - cw / 2) / old
-            iy = self.centre[1] + (about[1] - ch / 2) / old
-            self.centre = (ix - (about[0] - cw / 2) / z, iy - (about[1] - ch / 2) / z)
+            ix = self.center[0] + (about[0] - cw / 2) / old
+            iy = self.center[1] + (about[1] - ch / 2) / old
+            self.center = (ix - (about[0] - cw / 2) / z, iy - (about[1] - ch / 2) / z)
         self.zoom = None if abs(z - fitz) < 1e-6 else z
         if self.zoom is None:
-            self.centre = None
+            self.center = None
         self._dirty = True
 
     def _on_wheel(self, event, direction=None):
@@ -669,6 +732,99 @@ class CameraTab:
         cur = self.zoom or self._fit_zoom(self.frozen.image)
         self.set_zoom(cur * (1.25 if direction > 0 else 0.8), about=(event.x, event.y))
 
+    # ----- crosshair / reticle -----
+    def _image_xy(self, event):
+        if self.frozen is None or not hasattr(self, "_map"):
+            return None
+        z, cx, cy, cw, ch = self._map
+        h, w = self.frozen.image.shape
+        x = min(max(cx + (event.x - cw / 2) / z, 0), w - 1)
+        y = min(max(cy + (event.y - ch / 2) / z, 0), h - 1)
+        return (round(x, 1), round(y, 1))
+
+    def _mark_at(self, event):
+        xy = self._image_xy(event)
+        if xy is not None:
+            self.mark = xy
+            self._mark_changed()
+        return "break"  # no panning
+
+    def center_mark(self):
+        self.mark = None
+        self._mark_changed()
+
+    def _mark_changed(self):
+        self._dirty = True
+        if not self.playing:
+            self.page.after_idle(self._draw_if_frame)
+        self._save_state()
+
+    def _draw_if_frame(self):
+        if self.frozen is not None:
+            self._draw()
+
+    RETICLE_RANGE = (4.0, 1000.0)
+
+    def _show_reticle_controls(self):
+        """The diameter box and slider only show while Reticle is checked."""
+        for w in (self.reticle_lbl, self.reticle_entry, self.reticle_slider):
+            if self.v_reticle.get():
+                w.grid()
+            else:
+                w.grid_remove()
+
+    def _reticle_toggled(self):
+        self._show_reticle_controls()
+        self._mark_changed()
+
+    def _set_reticle(self, d, from_slider=False):
+        lo, hi = self.RETICLE_RANGE
+        d = min(max(float(d), lo), hi)
+        self.v_reticle_px.set(f"{round(d):g}")
+        if not from_slider:
+            self._sync_reticle_slider()
+        self._mark_changed()
+
+    def _sync_reticle_slider(self):
+        lo, hi = self.RETICLE_RANGE
+        d = min(max(self._float(self.v_reticle_px.get()) or 100.0, lo), hi)
+        self._reticle_syncing = True
+        self.reticle_slider.set((np.log10(d) - np.log10(lo)) / (np.log10(hi) - np.log10(lo)))
+        self._reticle_syncing = False
+
+    def _reticle_slid(self, x):
+        if getattr(self, "_reticle_syncing", False):
+            return
+        lo, hi = self.RETICLE_RANGE
+        self._set_reticle(10 ** (np.log10(lo) + float(x) * (np.log10(hi) - np.log10(lo))), from_slider=True)
+
+    def _reticle_typed(self):
+        d = self._float(self.v_reticle_px.get())
+        if d is None:
+            self.v_msg.set("Reticle diameter must be a number.")
+            return
+        self._set_reticle(d)
+
+    def _wheel_reticle(self, event, direction=None):
+        if direction is None:
+            direction = 1 if event.delta > 0 else -1
+        d = self._float(self.v_reticle_px.get()) or 100.0
+        step = 1.0 if (event.state & 0x0001) else max(1.0, round(d * 0.1))
+        self._set_reticle(d + step * direction)
+        return "break"
+
+    def _context_menu(self, event):
+        xy = self._image_xy(event)
+        m = tk.Menu(self.canvas, tearoff=0)
+        if xy is not None:
+            m.add_command(label=f"Move crosshair/reticle here ({xy[0]:.0f}, {xy[1]:.0f})",
+                          command=lambda: (setattr(self, "mark", xy), self._mark_changed()))
+        m.add_command(label="Center crosshair/reticle", command=self.center_mark)
+        try:
+            m.tk_popup(event.x_root, event.y_root)
+        finally:
+            m.grab_release()
+
     def _drag_start(self, event):
         self._drag = (event.x, event.y)
 
@@ -677,21 +833,21 @@ class CameraTab:
             return
         dx, dy = event.x - self._drag[0], event.y - self._drag[1]
         self._drag = (event.x, event.y)
-        cx, cy = self.centre
-        self.centre = (cx - dx / self.zoom, cy - dy / self.zoom)
+        cx, cy = self.center
+        self.center = (cx - dx / self.zoom, cy - dy / self.zoom)
         self._dirty = True
 
     def _view(self, img):
-        """(zoom, centre x, centre y) after clamping to the image."""
+        """(zoom, center x, center y) after clamping to the image."""
         h, w = img.shape
         cw, ch = max(self.canvas.winfo_width(), 10), max(self.canvas.winfo_height(), 10)
         z = self.zoom or self._fit_zoom(img)
-        cx, cy = self.centre or (w / 2, h / 2)
+        cx, cy = self.center or (w / 2, h / 2)
         half_w, half_h = cw / (2 * z), ch / (2 * z)
         cx = w / 2 if half_w >= w / 2 else min(max(cx, half_w), w - half_w)
         cy = h / 2 if half_h >= h / 2 else min(max(cy, half_h), h - half_h)
-        if self.centre is not None:
-            self.centre = (cx, cy)
+        if self.center is not None:
+            self.center = (cx, cy)
         return z, cx, cy
 
     def _contrast(self, img):
@@ -742,11 +898,19 @@ class CameraTab:
         self._map = (z, cx, cy, cw, ch)
         cv.delete("all")
         cv.create_image(int(round(ox)), int(round(oy)), image=self._photo, anchor="nw")
+        mxi, myi = self.mark or (w / 2, h / 2)
+        mx = cw / 2 + (mxi - cx) * z
+        my = ch / 2 + (myi - cy) * z
         if self.v_cross.get():
-            mx = cw / 2 + (w / 2 - cx) * z
-            my = ch / 2 + (h / 2 - cy) * z
             cv.create_line(mx, 0, mx, ch, fill="#ffd400", dash=(6, 4))
             cv.create_line(0, my, cw, my, fill="#ffd400", dash=(6, 4))
+        if self.v_reticle.get():
+            r = (self._float(self.v_reticle_px.get()) or 0) / 2 * z
+            if r > 0:
+                cv.create_oval(mx - r, my - r, mx + r, my + r, outline="#ffd400", width=2)
+            if not self.v_cross.get():  # small center mark
+                cv.create_line(mx - 6, my, mx + 7, my, fill="#ffd400")
+                cv.create_line(mx, my - 6, mx, my + 7, fill="#ffd400")
         cv.create_text(8, 8, anchor="nw", fill="#dddddd",
                        text=f"{z * 100:.0f}%" + ("" if self.playing else "   PAUSED"))
         if not self.playing:
@@ -825,28 +989,45 @@ class CameraTab:
         stamp = datetime.datetime.fromtimestamp(f.time).strftime("%Y%m%d_%H%M%S")
         base = os.path.join(self.save_dir, f"camera_{stamp}")
         n = 1
-        while os.path.exists(base + ".tif"):
+        while os.path.exists(base + ".png") or os.path.exists(base + "_raw.tif"):
             n += 1
             base = os.path.join(self.save_dir, f"camera_{stamp}_{n}")
+        lo, hi = self._contrast(f.image)
         meta = {"time": datetime.datetime.fromtimestamp(f.time).isoformat(timespec="milliseconds"),
                 "setup": self.setup, "camera": self.info, "frame": f.index,
-                "exposure_ms": self._float(self.v_exposure.get()),
+                "exposure_ms": self._get("exposure"),
                 "gain_db": self._float(self.v_gain.get()),
                 "bit_depth": self.bit_depth,
                 "piezo_um": self._stage_positions(),
-                "display_contrast": {"auto": self.v_auto.get(), "black": self._float(self.v_lo.get()),
-                                     "white": self._float(self.v_hi.get())}}
+                "crosshair_px": list(self.mark) if self.mark else None,
+                "reticle_diameter_px": self._float(self.v_reticle_px.get()) if self.v_reticle.get() else None,
+                "display_contrast": {"auto": self.v_auto.get(), "black": lo, "white": hi},
+                "files": {"png": "as shown on screen (8-bit, display contrast, no crosshair)",
+                          "raw_tif": f"camera counts, 0-{self.full_scale} ({self.bit_depth}-bit) in 16-bit"}}
         try:
             os.makedirs(self.save_dir, exist_ok=True)
+            # PNG: the picture as it looks on screen, full resolution. Image
+            # viewers show the raw TIFF almost black, because a 10-bit camera
+            # only fills the bottom 1/64 of a 16-bit file.
+            u8 = np.clip((f.image.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255).astype(np.uint8)
+            Image.fromarray(u8, "L").save(base + ".png")
+            # Raw TIFF: the camera's own counts, for analysis.
             img = np.ascontiguousarray(f.image.astype(np.uint16))
-            Image.fromarray(img).save(base + ".tif", description=json.dumps(meta))
+            Image.fromarray(img).save(base + "_raw.tif", description=json.dumps(meta))
             with open(base + ".json", "w", encoding="utf-8") as fh:
                 json.dump(meta, fh, indent=1)
-            self.v_msg.set(f"Saved {os.path.basename(base)}.tif")
-            logger.info("camera snapshot %s.tif", base)
+            self.v_msg.set(f"Saved {os.path.basename(base)}.png (+ _raw.tif, .json)")
+            logger.info("camera snapshot %s.png", base)
         except Exception as e:
             logger.exception("snapshot failed")
             self.v_msg.set(f"Could not save: {e}")
+
+    @staticmethod
+    def _time_text(ms):
+        """0.04 -> "0.04 ms", 26843.5 -> "26.84 s"."""
+        if ms >= 1000:
+            return f"{ms / 1000:.2f} s"
+        return f"{ms:.3g} ms"
 
     @staticmethod
     def _short(path, keep=2):
@@ -870,10 +1051,12 @@ class CameraTab:
             return {}
 
     def _save_state(self):
-        d = {"exposure_ms": self._float(self.v_exposure.get()),
+        d = {"exposure_ms": self._get("exposure"),
              "gain_db": self._float(self.v_gain.get()),
              "auto_contrast": self.v_auto.get(), "lo": self.v_lo.get(), "hi": self.v_hi.get(),
              "crosshair": self.v_cross.get(), "show_saturated": self.v_sat.get(),
+             "reticle": self.v_reticle.get(), "reticle_px": self._float(self.v_reticle_px.get()),
+             "mark": list(self.mark) if self.mark else None,
              "user_save_dir": self.user_dir, "auto_exposure": self.v_autoexp.get()}
         d = {k: v for k, v in d.items() if v is not None}
         try:

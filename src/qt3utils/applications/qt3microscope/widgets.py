@@ -212,3 +212,42 @@ class XYMicrometerBox(ttk.Frame):
 
     def summary_text(self):
         return "XY  —  " + ("Locked" if self.locked else "Unlocked")
+
+
+class ToolTip:
+    """Small yellow note that appears when the mouse rests on a widget."""
+
+    def __init__(self, widget, text, delay_ms=500, wraplength=320):
+        self.widget, self.text, self.delay, self.wrap = widget, text, delay_ms, wraplength
+        self._job = None
+        self._tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._job = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._job is not None:
+            self.widget.after_cancel(self._job)
+            self._job = None
+
+    def _show(self):
+        self._job = None
+        if self._tip is not None:
+            return
+        x = self.widget.winfo_rootx() + 10
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self._tip = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tk.Label(tw, text=self.text, justify="left", background="#ffffe0", relief="solid",
+                 borderwidth=1, wraplength=self.wrap, padx=6, pady=4).pack()
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
