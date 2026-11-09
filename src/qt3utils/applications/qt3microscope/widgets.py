@@ -7,6 +7,7 @@ setups; the setup profile decides which ones appear.
 
 import tkinter as tk
 from tkinter import ttk
+from qt3utils.applications.qt3microscope.theme import C
 
 GREEN = "#2e9d3a"
 ORANGE = "#e08a00"
@@ -59,7 +60,7 @@ class CollapsibleSection(tk.Frame):
         self.pop_btn = None
         if on_popout is not None:
             self.pop_btn = tk.Button(self.header, text="↗", width=2, padx=0, pady=0, bd=1,
-                                     relief="flat", bg=HEADER_BG, activebackground="#b5b5b5",
+                                     relief="flat", bg=HEADER_BG, activebackground=C.header_active,
                                      cursor="hand2", command=on_popout)
             self.pop_btn.pack(side="right", padx=(0, 4))
         self.summary = tk.Label(self.header, text="—", bg=HEADER_BG)
@@ -190,7 +191,7 @@ class XYMicrometerBox(ttk.Frame):
         home = ttk.Button(steps, text="Home", width=6)
         home.pack(side="left", padx=(8, 0))
         self.move_widgets.append(home)
-        self.note = ttk.Label(self, foreground="#555555")
+        self.note = ttk.Label(self, foreground=C.muted)
         self.note.pack(anchor="w", pady=(4, 0))
         self._refresh()
 
@@ -200,11 +201,13 @@ class XYMicrometerBox(ttk.Frame):
 
     def _refresh(self):
         if self.locked:
-            self.lock_btn.config(text="Locked", bg=AMBER, activebackground=AMBER)
+            self.lock_btn.config(text="Locked", bg=AMBER, activebackground=AMBER,
+                                fg="#000000", activeforeground="#000000")  # dark text on amber in both themes
             self.note.config(text="Locked: no moves from buttons, arrow keys or Home")
             state = "disabled"
         else:
-            self.lock_btn.config(text="Unlocked", bg="#e3e3e3", activebackground="#e3e3e3")
+            self.lock_btn.config(text="Unlocked", bg=C.button, activebackground=C.button,
+                                fg=C.text, activeforeground=C.text)
             self.note.config(text="Unlocked: moves allowed")
             state = "normal"
         for w in self.move_widgets:
@@ -243,7 +246,7 @@ class ToolTip:
         self._tip = tw = tk.Toplevel(self.widget)
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
-        tk.Label(tw, text=self.text, justify="left", background="#ffffe0", relief="solid",
+        tk.Label(tw, text=self.text, justify="left", background=C.tooltip, relief="solid",
                  borderwidth=1, wraplength=self.wrap, padx=6, pady=4).pack()
 
     def _hide(self, _event=None):

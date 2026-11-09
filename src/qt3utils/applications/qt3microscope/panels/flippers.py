@@ -23,6 +23,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
+from qt3utils.applications.qt3microscope.theme import C
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class FlippersPanel:
         levels = self.controller.levels if self._connected() else [None] * len(self.state_lbls)
         for lbl, lv in zip(self.state_lbls, levels):
             if lv is None:
-                lbl.configure(text="—", bg=self._idle_bg, fg="black")
+                lbl.configure(text="—", bg=self._idle_bg, fg=C.text)
             else:
                 lbl.configure(text="UP" if lv else "DOWN", bg=GREEN if lv else GRAY, fg="white")
         if self._connected():

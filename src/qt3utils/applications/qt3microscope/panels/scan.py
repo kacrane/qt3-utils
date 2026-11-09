@@ -30,6 +30,7 @@ from tkinter import filedialog, ttk
 import numpy as np
 
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED
+from qt3utils.applications.qt3microscope.theme import C, save_figure
 
 logger = logging.getLogger(__name__)
 
@@ -364,7 +365,7 @@ class ImageScanTab(_PlotTab):
         self.time_e = self._entry(r + 3, "Time per row (s)", self.cfg.get("time", 1))
         btns = ttk.Frame(self.left)
         btns.grid(row=r + 4, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.start_btn = tk.Button(btns, text="Start scan", width=10, bg="#1f8f2f", fg="white", command=self.start)
+        self.start_btn = tk.Button(btns, text="Start scan", width=10, bg=C.go, fg="white", command=self.start)
         # Pause turns into Continue while a scan is paused; Cancel ends the scan
         # early (running or paused) and goes back to where it started.
         self.pause_btn = tk.Button(btns, text="Pause", width=8, command=self.pause_or_continue)
@@ -475,12 +476,12 @@ class ImageScanTab(_PlotTab):
         lo, hi = self.norm if self.norm[0] is not None else (np.nanmin(z) if np.any(np.isfinite(z)) else 0.0,
                                                               np.nanmax(z) if np.any(np.isfinite(z)) else 1.0)
         g = np.clip((z - lo) / ((hi - lo) or 1.0), 0, 1) * 255
-        g = np.where(np.isfinite(z), g, 230)  # rows not scanned yet: light grey
+        g = np.where(np.isfinite(z), g, int(C.plot_unscanned[1:3], 16))  # rows not scanned yet: grey
         im = Image.fromarray(np.flipud(g).astype(np.uint8), "L").resize((self.thumb_px, self.thumb_px), Image.NEAREST)
         return ImageTk.PhotoImage(im)
 
     def _gallery_add(self, scan):
-        f = tk.Frame(self.gal_inner, bd=0, highlightthickness=3, highlightbackground="#d0d0d0")
+        f = tk.Frame(self.gal_inner, bd=0, highlightthickness=3, highlightbackground=C.border)
         f.pack(side="top", before=self._first_thumb(), padx=2, pady=3)
         z = scan["start_position_vector"][2]
         ttk.Label(f, text=f"{scan['id']} · {scan['range']:g} µm · z {z:.2f}",
@@ -518,7 +519,7 @@ class ImageScanTab(_PlotTab):
             t = self.thumbs.get(sc["id"])
             if t is None:
                 continue
-            colour = "#1864ab" if sc is self.shown else ("#ff9f1c" if sc is self.pinned else "#d0d0d0")
+            colour = C.accent if sc is self.shown else (C.pin if sc is self.pinned else C.border)
             t["frame"].configure(highlightbackground=colour, highlightcolor=colour)
             t["x"].configure(state="disabled" if sc is self.running or sc is self.paused else "normal")
 
@@ -839,7 +840,7 @@ class ImageScanTab(_PlotTab):
         ax.xaxis.set_major_locator(MaxNLocator(4))
         ax.yaxis.set_major_locator(MaxNLocator(4))
         ax.grid(alpha=0.3)
-        ax.set_facecolor("#e6e6e6" if scan is not None else "white")  # grey = rows not scanned yet
+        ax.set_facecolor(C.plot_unscanned if scan is not None else C.plot_bg)  # grey = rows not scanned yet
         if scan is None:
             ax.set_xlim(frame[0], frame[1])
             ax.set_ylim(frame[2], frame[3])
@@ -847,7 +848,7 @@ class ImageScanTab(_PlotTab):
             ax.set_xlabel("x position (µm)", fontsize=FONT)
             ax.set_ylabel("y position (µm)", fontsize=FONT)
             ax.text(0.5, 0.5, empty_text, ha="center", va="center", transform=ax.transAxes,
-                    color="#888888", fontsize=FONT + 1)
+                    color=C.faint, fontsize=FONT + 1)
             return ax
         img = ax.imshow(scan["data_z"], extent=self._extent(scan), cmap=DEFAULT_COLOR_MAP, origin="lower",
                         aspect="equal", interpolation="none")
@@ -863,10 +864,10 @@ class ImageScanTab(_PlotTab):
         z = scan["start_position_vector"][2]
         ax.set_title(f"{title} {scan['id']} · z {z:.2f} µm", fontsize=FONT, pad=14)
         if scan is self.running and scan["index"] < scan["n_pixels"]:
-            ax.axhline(scan["data_y"][scan["index"]], color="#1f8f2f", linewidth=1)
+            ax.axhline(scan["data_y"][scan["index"]], color=C.go, linewidth=1)
         x, y = self.engine.position("x"), self.engine.position("y")
         if x is not None and y is not None:
-            ax.plot(x, y, "o", fillstyle="none", markeredgecolor="#1864ab", markeredgewidth=2)
+            ax.plot(x, y, "o", fillstyle="none", markeredgecolor=C.accent, markeredgewidth=2)
         ax.set_xlim(*self._extent(scan)[:2])
         ax.set_ylim(*self._extent(scan)[2:])
         return ax
@@ -876,7 +877,7 @@ class ImageScanTab(_PlotTab):
         e = self._extent(scan)
         dz = scan["start_position_vector"][2] - ref["start_position_vector"][2]
         alpha = 1.0 - 0.85 * min(1.0, abs(dz) / self.box_z_full) if self.box_z_full > 0 else 1.0
-        ax.add_patch(Rectangle((e[0], e[2]), e[1] - e[0], e[3] - e[2], fill=False, edgecolor="#ff9f1c",
+        ax.add_patch(Rectangle((e[0], e[2]), e[1] - e[0], e[3] - e[2], fill=False, edgecolor=C.pin,
                                linewidth=1.8, alpha=alpha, clip_on=True))
 
     def _go_to(self):
@@ -919,7 +920,7 @@ class ImageScanTab(_PlotTab):
         ax.set_xlabel(f"{scan['axis_1']} position (µm)")
         ax.set_ylabel(f"{scan['axis_2']} position (µm)")
         fig.tight_layout()
-        fig.savefig(path, dpi=300)
+        save_figure(fig, path, dpi=300)
 
     def _save_hdf5(self, path, stem, s):
         import h5py
@@ -1080,7 +1081,7 @@ class LineScanTab(_PlotTab):
             scans = [sc for sc in self.scans if sc["axis"] == name]
             if not scans:
                 ax.text(0.5, 0.5, f"Optimize {name.upper()}", ha="center", va="center",
-                        transform=ax.transAxes, color="#888888", fontsize=FONT + 1)
+                        transform=ax.transAxes, color=C.faint, fontsize=FONT + 1)
                 continue
             others = [o for o in ("x", "y", "z") if o != name]
             for n, sc in enumerate(scans):
@@ -1139,7 +1140,7 @@ class LineScanTab(_PlotTab):
             if note is not None:
                 note.remove()
             note = ax.annotate("", xy=(0, 0), xytext=(8, 8), textcoords="offset points", fontsize=FONT - 1,
-                               bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#888888", alpha=0.95),
+                               bbox=dict(boxstyle="round,pad=0.3", fc=C.panel, ec=C.faint, alpha=0.95),
                                zorder=10, annotation_clip=False)
             self._hover_note = note
         note.xy = (event.xdata, event.ydata)
@@ -1193,7 +1194,7 @@ class LineScanTab(_PlotTab):
         s = self.shown
         try:
             if ext == ".png" and self.fig is not None:
-                self.fig.savefig(os.path.join(folder, stem + ".png"), dpi=300)
+                save_figure(self.fig, os.path.join(folder, stem + ".png"), dpi=300)
             import h5py
             with h5py.File(os.path.join(folder, stem + ".hdf5"), "w") as df:
                 ds = df.create_dataset("file_metadata", data=np.array(

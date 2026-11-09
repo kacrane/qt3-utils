@@ -27,6 +27,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from qt3utils.applications.qt3microscope.widgets import AMBER, GRAY, GREEN, ORANGE, RED
+from qt3utils.applications.qt3microscope.theme import C
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class MicrostagePanel(ttk.Frame):
         self.keys_chk = ttk.Checkbutton(bottom, text="Arrow keys (click this box first)", variable=self.keys_var)
         self.keys_chk.pack(side="left")
         self.move_widgets.append(self.keys_chk)
-        self.note = ttk.Label(self, foreground="#555555", wraplength=int(380 * scale), justify="left")
+        self.note = ttk.Label(self, foreground=C.muted, wraplength=int(380 * scale), justify="left")
         self.note.pack(anchor="w", pady=(2, 0))
         lim = self.limits
         if lim:
@@ -125,10 +126,12 @@ class MicrostagePanel(ttk.Frame):
 
     def _refresh(self):
         if self.locked:
-            self.lock_btn.config(text="Locked", bg=AMBER, activebackground=AMBER)
+            self.lock_btn.config(text="Locked", bg=AMBER, activebackground=AMBER,
+                                fg="#000000", activeforeground="#000000")  # dark text on amber in both themes
             state = "disabled"
         else:
-            self.lock_btn.config(text="Unlocked", bg="#e3e3e3", activebackground="#e3e3e3")
+            self.lock_btn.config(text="Unlocked", bg=C.button, activebackground=C.button,
+                                fg=C.text, activeforeground=C.text)
             state = "normal" if (self.stage is not None and not self.busy) else "disabled"
         for w in self.move_widgets:
             w.configure(state=state)

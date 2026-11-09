@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from qt3utils.applications.qt3microscope.widgets import AMBER, GRAY, GREEN, RED
+from qt3utils.applications.qt3microscope.theme import C
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class StagePanel:
         self.step_var = tk.IntVar(value=0)
         ttk.Checkbutton(keys, text="Arrow-key stepping", variable=self.step_var,
                         command=self._toggle_keys).pack(side="left")
-        self.keys_note = tk.Label(keys, text="", fg="black")
+        self.keys_note = tk.Label(keys, text="", fg=C.text)
         self.keys_note.pack(side="left", padx=6)
         self._note_bg = self.keys_note.cget("bg")
 
@@ -142,9 +143,9 @@ class StagePanel:
                 hint += ", ↑/↓ " + labels[1]
             if len(labels) > 2:
                 hint += ", +/− " + labels[2]
-            self.keys_note.configure(text=f"ON: {hint}", bg=AMBER)
+            self.keys_note.configure(text=f"ON: {hint}", bg=AMBER, fg="#000000")
         else:
-            self.keys_note.configure(text="", bg=self._note_bg)
+            self.keys_note.configure(text="", bg=self._note_bg, fg=C.text)
 
     def _on_key(self, event):
         if self._closing or not self.step_var.get():

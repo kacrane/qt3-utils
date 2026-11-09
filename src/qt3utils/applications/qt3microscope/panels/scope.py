@@ -21,6 +21,7 @@ from tkinter import filedialog, ttk
 
 from qt3utils.applications.qt3microscope import counters
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, RED
+from qt3utils.applications.qt3microscope.theme import C, save_figure
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,7 @@ class ScopePanel:
     def _build(self, body):
         ctrl = ttk.Frame(body)
         ctrl.pack(side="left", fill="y", padx=(0, 10))
-        self.rate_lbl = tk.Label(ctrl, text="--", font=("TkDefaultFont", 20, "bold"), fg="#1d4fb0",
+        self.rate_lbl = tk.Label(ctrl, text="--", font=("TkDefaultFont", 20, "bold"), fg=C.reading,
                                  width=13, anchor="w")
         self.rate_lbl.grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(ctrl, text="Time per sample (s)").grid(row=1, column=0, sticky="w", pady=2)
@@ -95,7 +96,7 @@ class ScopePanel:
         self.raw_check.grid(row=2, column=0, columnspan=2, sticky="w")
         btns = ttk.Frame(ctrl)
         btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.start_btn = tk.Button(btns, text="Start", width=7, bg="#1f8f2f", fg="white", command=self.start)
+        self.start_btn = tk.Button(btns, text="Start", width=7, bg=C.go, fg="white", command=self.start)
         self.pause_btn = tk.Button(btns, text="Pause", width=7, command=self.pause)
         self.reset_btn = tk.Button(btns, text="Reset", width=7, command=self.reset)
         self.save_btn = tk.Button(btns, text="Save", width=7, command=self.save)
@@ -166,7 +167,7 @@ class ScopePanel:
         x = self.data_x[-MAX_SAMPLES_TO_PLOT:]
         y = self.data_y[-MAX_SAMPLES_TO_PLOT:]
         self.ax.clear()
-        self.ax.plot(x, y, color="k", linewidth=1.2)
+        self.ax.plot(x, y, color=C.plot_line, linewidth=1.2)
         if len(x) > 1:
             self.ax.set_xlim(x[0], x[-1])
         self.ax.set_xlabel("Time (s)", fontsize=9)
@@ -357,7 +358,7 @@ class ScopePanel:
         try:
             if ext.lower() == ".png" and self.fig is not None:
                 self._update_plot(force=True)
-                self.fig.savefig(os.path.join(folder, stem + ".png"), dpi=300)
+                save_figure(self.fig, os.path.join(folder, stem + ".png"), dpi=300)
             self._save_hdf5(os.path.join(folder, stem + ".hdf5"), stem)
             self.msg_var.set(f"Saved {stem} in {folder}")
         except Exception as e:

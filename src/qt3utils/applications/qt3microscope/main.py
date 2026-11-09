@@ -17,6 +17,9 @@ so setup differences live in the profiles, not in separate branches.
 Desktop shortcut (no terminal window): run make_desktop_shortcut.ps1 once.
 Terminal output goes to the Log section under the scope instead.
 
+File > Preferences chooses light or dark colours and the setup profile
+(prefs.py); both apply on the next start, and the dialog can restart.
+
 Run:  python -m qt3utils.applications.qt3microscope.main
       python -m qt3utils.applications.qt3microscope.main --setup TQLM
       python -m qt3utils.applications.qt3microscope.main --config my_profile.yaml
@@ -41,6 +44,9 @@ from qt3utils.applications.qt3microscope import console
 from qt3utils.applications.qt3microscope.hub import Hub
 from qt3utils.applications.qt3microscope.widgets import (CollapsibleSection, ScrollableFrame,
                                                          StatusChip, XYMicrometerBox)
+from qt3utils.applications.qt3microscope import prefs as prefs_mod
+from qt3utils.applications.qt3microscope import theme
+from qt3utils.applications.qt3microscope.theme import C
 
 # Catch everything that would go to a terminal before logging is set up, so
 # the Log section under the scope shows it (the desktop shortcut runs
@@ -74,18 +80,24 @@ except OSError:
     pass
 
 
+def profile_path(setup=None, path=None):
+    """The profile file to read. An explicit path wins over the setup name."""
+    return path or os.path.join(CONFIG_DIR, f"{(setup or DEFAULT_SETUP).upper()}.yaml")
+
+
 def load_profile(setup=None, path=None):
     """Read a setup profile. An explicit path wins over the setup name."""
-    if path is None:
-        path = os.path.join(CONFIG_DIR, f"{(setup or DEFAULT_SETUP).upper()}.yaml")
-    with open(path, "r", encoding="utf-8") as f:  # Windows would read it as cp1252
+    with open(profile_path(setup, path), "r", encoding="utf-8") as f:  # Windows would read it as cp1252
         return yaml.safe_load(f)["QT3MICROSCOPE"]
 
 
 class MicroscopeWindow:
-    def __init__(self, window, profile):
+    def __init__(self, window, profile, path=None, prefs=None, config_locked=False):
         self.window = window
         self.profile = profile
+        self.profile_path = path or profile_path(profile.get("setup"))
+        self.prefs = prefs or prefs_mod.load()
+        self.config_locked = config_locked
         self.setup = profile.get("setup", "?")
         self.sections = {}
         self.chips = {}
@@ -130,6 +142,9 @@ class MicroscopeWindow:
     def _build_menu(self):
         bar = tk.Menu(self.window)
         file_menu = tk.Menu(bar, tearoff=0)
+        file_menu.add_command(label="Preferences…", command=self.open_preferences)
+        file_menu.add_command(label="Restart", command=self.restart)
+        file_menu.add_separator()
         file_menu.add_command(label="Quit", command=self.quit)
         bar.add_cascade(label="File", menu=file_menu)
 
@@ -154,7 +169,7 @@ class MicroscopeWindow:
             chip = StatusChip(strip, item["label"])
             chip.pack(side="left", padx=3)
             self.chips[item["key"]] = chip
-        tk.Label(strip, text=f"Setup: {self.setup}", fg="#444444").pack(side="right", padx=6)
+        tk.Label(strip, text=f"Setup: {self.setup}", fg=C.muted).pack(side="right", padx=6)
 
     # ----- middle ----------------------------------------------------------
     def _build_body(self):
@@ -173,7 +188,7 @@ class MicroscopeWindow:
         for name in self.profile.get("measurements", ["Image scan"]):
             page = ttk.Frame(self.tabs)
             ttk.Label(page, text=f"{name}\n\nNot connected yet: this tab comes in a later step.",
-                      foreground="#555555", justify="left").pack(anchor="nw", padx=20, pady=20)
+                      foreground=C.muted, justify="left").pack(anchor="nw", padx=20, pady=20)
             self.tabs.add(page, text=f"  {name}  ")
             self.tab_pages[name] = page
         self.tabs.pack(side="top", fill="both", expand=True)
@@ -205,7 +220,7 @@ class MicroscopeWindow:
                                    start_open=self._start_open("scope", True))
         scope.pack(side="left", fill="x", expand=True, anchor="s")
         ttk.Label(scope.body, text="Count rate and trace go here (scope step).",
-                  foreground="#555555").pack(anchor="w", pady=30)
+                  foreground=C.muted).pack(anchor="w", pady=30)
         self.sections["scope"] = scope
 
         if bottom.get("xy_micrometers", False):
@@ -232,7 +247,7 @@ class MicroscopeWindow:
             self.log_panel = LogPanel(log, scale=self.scale)
         except Exception as e:
             logger.exception("log panel failed to start")
-            ttk.Label(log.body, text=f"Could not start the log: {e}", foreground="#c62828").pack(anchor="w")
+            ttk.Label(log.body, text=f"Could not start the log: {e}", foreground=C.red).pack(anchor="w")
         return outer
 
     def _build_drawer(self, parent):
@@ -261,7 +276,7 @@ class MicroscopeWindow:
             self.sections_menu.add_checkbutton(label=item["label"], variable=var,
                                                command=self._repack_drawer)
             note = item.get("note", "Not connected yet.")
-            ttk.Label(sec.body, text=note, foreground="#555555", wraplength=self.px(330),
+            ttk.Label(sec.body, text=note, foreground=C.muted, wraplength=self.px(330),
                       justify="left").pack(anchor="w")
             self.sections[item["key"]] = sec
         self._repack_drawer()
@@ -341,7 +356,7 @@ class MicroscopeWindow:
         tk_call("wm", "geometry", sec._w, geometry)
 
         note = ttk.Frame(self.drawer_scroll.inner, padding=(8, 4), relief="solid", borderwidth=1)
-        ttk.Label(note, text=f"{sec.title_text}  ↗", foreground="#555555").pack(side="left")
+        ttk.Label(note, text=f"{sec.title_text}  ↗", foreground=C.muted).pack(side="left")
         ttk.Button(note, text="Bring back", command=lambda: self.pop_in(key)).pack(side="right")
         ttk.Button(note, text="Show", width=6,
                    command=lambda: tk_call("raise", sec._w)).pack(side="right", padx=4)
@@ -584,26 +599,58 @@ class MicroscopeWindow:
         page = self.tab_pages[name]
         for child in page.winfo_children():
             child.destroy()
-        ttk.Label(page, text=f"Could not start this tab: {err}", foreground="#c62828",
+        ttk.Label(page, text=f"Could not start this tab: {err}", foreground=C.red,
                   wraplength=self.px(600), justify="left").pack(anchor="nw", padx=20, pady=20)
 
     def _panel_failed(self, key, err):
         logger.exception("%s panel failed to start", key)
         self._clear_note(key)
         ttk.Label(self.sections[key].body, text=f"Could not start this panel: {err}",
-                  foreground="#c62828", wraplength=self.px(330), justify="left").pack(anchor="w")
+                  foreground=C.red, wraplength=self.px(330), justify="left").pack(anchor="w")
 
     def quit(self):
         self.save_state()
         self.hub.close()
         self.window.destroy()
 
+    # ----- preferences -----------------------------------------------------
+    def open_preferences(self):
+        prefs_mod.PreferencesDialog(self.window, prefs_mod.load(), self.profile_path, self._prefs_saved,
+                                    scale=self.scale, config_locked=self.config_locked)
+
+    def _prefs_saved(self, prefs, restart):
+        self.prefs = prefs
+        if restart:
+            self.restart()
+
+    def restart(self):
+        """Close everything and start QT3 Microscope again with the same
+        command line (the saved preferences are read again on start)."""
+        from tkinter import messagebox
+        if not messagebox.askokcancel(
+                "Restart QT3 Microscope",
+                "Restart now? A scan or measurement that is running will stop.", parent=self.window):
+            return
+        import subprocess
+        logger.info("Restarting QT3 Microscope")
+        self.save_state()
+        self.hub.close()
+        env = dict(os.environ, QT3MICROSCOPE_WAIT_PID=str(os.getpid()))
+        cmd = [sys.executable, os.path.abspath(__file__)] + sys.argv[1:]
+        try:
+            subprocess.Popen(cmd, env=env, cwd=os.getcwd())
+        except OSError as e:
+            messagebox.showerror("Restart failed", f"Could not start again: {e}\nStart it from the shortcut.",
+                                 parent=self.window)
+        self.window.destroy()
+
     # ----- bottom ----------------------------------------------------------
     def _build_footer(self):
         foot = tk.Frame(self.window, bd=1, relief="sunken")
         foot.pack(side="bottom", fill="x", before=self.hpane)
-        tk.Label(foot, text=f"Profile: {self.setup}.yaml   ·   Log: {LOG_PATH}",
-                 fg="#444444", font=("TkDefaultFont", 8)).pack(side="left", padx=6)
+        theme_name = "dark" if C.dark else "light"
+        tk.Label(foot, text=f"Profile: {self.profile_path}   ·   {theme_name} theme   ·   Log: {LOG_PATH}",
+                 fg=C.muted, font=("TkDefaultFont", 8)).pack(side="left", padx=6)
 
 
 def parse_args(argv):
@@ -656,14 +703,55 @@ def _startup_failed(err):
         pass
 
 
+def _wait_for_previous(timeout=15.0):
+    """After File > Restart, wait until the old process has exited, so it has
+    let go of the hardware (the XY micrometers allow one process at a time)."""
+    pid = os.environ.pop("QT3MICROSCOPE_WAIT_PID", "")
+    if not pid.isdigit():
+        return
+    pid = int(pid)
+    if sys.platform == "win32":
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(SYNCHRONIZE, False, pid)
+        if h:
+            k32.WaitForSingleObject(h, int(timeout * 1000))
+            k32.CloseHandle(h)
+        return
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        time.sleep(0.1)
+
+
 def main(is_root_process=True, argv=None):
     args = parse_args(argv if (argv is not None or is_root_process) else [])
     try:
-        profile = load_profile(args.setup, args.config)
+        if is_root_process:
+            _wait_for_previous()
+        prefs = prefs_mod.load()
+        setup, path = prefs_mod.resolve_profile(prefs, args.setup, args.config)
+        path = profile_path(setup, path)
+        try:
+            profile = load_profile(path=path)
+        except Exception as e:
+            if args.config or prefs["profile"] == "shortcut":
+                raise
+            # A broken profile chosen in Preferences must not lock the program out.
+            print(f"WARNING: could not read the profile chosen in Preferences ({path}): {e}. "
+                  f"Using the shortcut's profile instead; fix it in File > Preferences.")
+            path = profile_path(args.setup)
+            profile = load_profile(path=path)
         if is_root_process:
             enable_sharp_display()  # must happen before the Tk window exists
         window = tk.Tk(className="QT3 Microscope") if is_root_process else tk.Toplevel()
-        MicroscopeWindow(window, profile)
+        if is_root_process:
+            theme.apply(window, prefs["dark"])  # before any widget is built
+        MicroscopeWindow(window, profile, path, prefs, config_locked=bool(args.config))
     except Exception as e:
         if not is_root_process:
             raise

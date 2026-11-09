@@ -39,6 +39,7 @@ from tkinter import filedialog, ttk
 import numpy as np
 
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, ORANGE, RED, ToolTip
+from qt3utils.applications.qt3microscope.theme import C
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +261,7 @@ class CameraTab:
         top = ttk.Frame(left)
         top.pack(fill="x", pady=(8, 6))
         self.play_btn = tk.Button(top, text="▶  Play", width=10, font=("TkDefaultFont", 11, "bold"),
-                                  bg="#d8f0d8", command=self.toggle_play)
+                                  bg=C.play_bg, command=self.toggle_play)
         self.play_btn.pack(side="left")
         tk.Button(top, text="Snapshot", font=("TkDefaultFont", 10), command=self.snapshot).pack(
             side="left", padx=(6, 0), fill="y")
@@ -307,7 +308,7 @@ class CameraTab:
         self.exp_unit = "ms"
         self._put("exposure", float(self.cfg.get("exposure_ms", 10.0)))
         self._sync_sliders()
-        self.range_lbl = ttk.Label(g, text="", foreground="#555555", wraplength=self.px(210), justify="left")
+        self.range_lbl = ttk.Label(g, text="", foreground=C.muted, wraplength=self.px(210), justify="left")
         self.range_lbl.grid(row=4, column=0, columnspan=2, sticky="w")
         self._autoexp_changed(save=False)
 
@@ -367,7 +368,7 @@ class CameraTab:
 
         s = ttk.LabelFrame(left, text="Snapshots go to", padding=6)
         s.pack(fill="x", pady=4)
-        self.dir_lbl = ttk.Label(s, text=self._short(self.save_dir), foreground="#555555", width=20)
+        self.dir_lbl = ttk.Label(s, text=self._short(self.save_dir), foreground=C.muted, width=20)
         self.dir_lbl.pack(side="left")
         ttk.Button(s, text="Folder…", width=8, command=self.choose_dir).pack(side="right")
 
@@ -377,8 +378,8 @@ class CameraTab:
         bar.pack(side="bottom", fill="x")
         self.readout_lbl = tk.Label(bar, textvariable=self.v_readout, anchor="w")
         self.readout_lbl.pack(side="left")
-        ttk.Label(bar, textvariable=self.v_msg, foreground="#555555").pack(side="left", padx=(20, 0))
-        ttk.Label(bar, textvariable=self.v_cursor, foreground="#333333").pack(side="right")
+        ttk.Label(bar, textvariable=self.v_msg, foreground=C.muted).pack(side="left", padx=(20, 0))
+        ttk.Label(bar, textvariable=self.v_cursor, foreground=C.text).pack(side="right")
 
         cv = self.canvas
         cv.bind("<Configure>", lambda _e: self._view_changed())
@@ -631,7 +632,7 @@ class CameraTab:
                     self.playing = val
                     self.play_btn.config(state="normal",
                                          text="⏸  Pause" if val else "▶  Play",
-                                         bg="#f3e0b5" if val else "#d8f0d8")
+                                         bg=C.pause_bg if val else C.play_bg)
                     if val:
                         self.v_msg.set("Live.")
                         self.set_status("live", GREEN)
@@ -653,7 +654,7 @@ class CameraTab:
                 elif kind == "released":
                     self.playing = False
                     self.info = {}
-                    self.play_btn.config(state="normal", text="▶  Play", bg="#d8f0d8")
+                    self.play_btn.config(state="normal", text="▶  Play", bg=C.play_bg)
                     self.v_msg.set("Camera released. Play opens it again.")
                     self.set_status("off", GRAY)
                 elif kind == "error":
@@ -932,7 +933,7 @@ class CameraTab:
         if saturated:
             parts.append(f"SATURATED (~{n_sat} px)")
         self.v_readout.set("   ".join(parts))
-        self.readout_lbl.config(fg=RED if saturated else "#222222")
+        self.readout_lbl.config(fg=RED if saturated else C.text)
 
     def _on_motion(self, event):
         if self.frozen is None or not hasattr(self, "_map"):

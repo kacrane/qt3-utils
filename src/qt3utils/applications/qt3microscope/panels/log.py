@@ -14,6 +14,7 @@ from tkinter import ttk
 
 from qt3utils.applications.qt3microscope import console
 from qt3utils.applications.qt3microscope.widgets import GRAY, ORANGE, RED
+from qt3utils.applications.qt3microscope.theme import C
 
 POLL_MS = 200
 ERROR_RE = re.compile(r"\b(ERROR|CRITICAL)\b|Error:")
@@ -41,7 +42,7 @@ class LogPanel:
         box = ttk.Frame(body)
         box.pack(fill="both", expand=True, pady=(4, 0))
         self.text = tk.Text(box, height=10, wrap="none", font=("Courier New", 9),
-                            bg="#fbfbfb", relief="sunken", bd=1)
+                            bg=C.log_bg, relief="sunken", bd=1)
         ys = ttk.Scrollbar(box, orient="vertical", command=self.text.yview)
         xs = ttk.Scrollbar(box, orient="horizontal", command=self.text.xview)
         self.text.configure(yscrollcommand=ys.set, xscrollcommand=xs.set)

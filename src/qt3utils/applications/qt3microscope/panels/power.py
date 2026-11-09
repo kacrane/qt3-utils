@@ -15,10 +15,11 @@ import tkinter as tk
 from tkinter import ttk
 
 from qt3utils.applications.qt3microscope.widgets import GRAY, GREEN, RED
+from qt3utils.applications.qt3microscope.theme import C
 
 logger = logging.getLogger(__name__)
 
-BLUE = "#1d4fb0"
+BLUE = C.reading  # theme.apply() runs before this module is imported
 MW_FONT = ("TkDefaultFont", 18, "bold")
 V_FONT = ("TkDefaultFont", 9)
 LARGE_SCALE = 8  # double-clicked readings are this many times bigger
@@ -110,7 +111,7 @@ class PowerPanel:
             tk.Label(big_mw_line, text="mW", font=_big(("TkDefaultFont", 10)),
                      padx=12).pack(side="left", anchor="s")
             big_v_line = ttk.Frame(body)
-            big_v = tk.Label(big_v_line, text="", font=_big(V_FONT), fg="black", padx=12)
+            big_v = tk.Label(big_v_line, text="", font=_big(V_FONT), fg=C.text, padx=12)
             big_v.pack(side="left")
             r = {"key": det["name"], "row": row, "name": name, "mw": mw, "mw_unit": mw_unit,
                  "volts": volts, "big_mw_line": big_mw_line, "big_mw": big_mw,
@@ -127,9 +128,9 @@ class PowerPanel:
 
         ctrl = ttk.Frame(body)
         ctrl.pack(fill="x", pady=(6, 0))
-        self.start_btn = tk.Button(ctrl, text="Start", bg="#1f8f2f", fg="white", width=8, command=self.start)
+        self.start_btn = tk.Button(ctrl, text="Start", bg=C.go, fg="white", width=8, command=self.start)
         self.start_btn.pack(side="left")
-        self.stop_btn = tk.Button(ctrl, text="Stop", bg="#e33", fg="white", width=8, command=self.stop)
+        self.stop_btn = tk.Button(ctrl, text="Stop", bg=C.stop, fg="white", width=8, command=self.stop)
         self.stop_btn.pack(side="left", padx=6)
         self.state_var = tk.StringVar(value="Stopped")
         ttk.Label(ctrl, textvariable=self.state_var).pack(side="left", padx=6)
