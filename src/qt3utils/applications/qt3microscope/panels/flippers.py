@@ -77,6 +77,17 @@ class FlippersPanel:
         self._busy = False
         self._closing = False
         self._last_action = ""
+        # Automatic switching (File > Preferences): mirror index -> level for
+        # "camera" and "counter", from the profile's flippers: auto: section.
+        self.auto_enabled = lambda: False  # set by the window from the preferences
+        self.auto_targets = {}
+        names = list(self.cfg.flipper_names)
+        for mode, targets in ((cfg.get("auto") or {}).items()):
+            try:
+                self.auto_targets[mode] = {names.index(n): str(v).lower() in ("up", "true", "1")
+                                           for n, v in (targets or {}).items()}
+            except ValueError as e:
+                logger.warning("flippers auto %s: unknown mirror name (%s)", mode, e)
         self._build(section.body)
         self._update_states()
         hub.on_close(self.close)
@@ -193,7 +204,31 @@ class FlippersPanel:
         self._last_action = label
         self._run(label, lambda: getattr(ctrl, method)(*args))
 
-    def _run(self, label, fn, on_ok=None):
+    AUTO_LABELS = {"camera": "Auto: camera", "counter": "Auto: counter"}
+
+    def auto_switch(self, mode, then=None, label=None):
+        """Put the mirrors in the "camera" or "counter" position if automatic
+        switching is on, then call then() (after the mirrors have settled).
+        Only the mirrors listed for that mode move, so the excitation choice
+        stays as it is. then() runs whatever happens, so a scan never hangs."""
+        then = then or (lambda: None)
+        targets = self.auto_targets.get(mode)
+        if not targets or not self.auto_enabled() or not self._connected() or self._closing:
+            then()
+            return
+        if self._busy:  # a button press is still going: try again shortly
+            self.section.after(150, lambda: self.auto_switch(mode, then, label))
+            return
+        current = self.controller.levels
+        updates = {i: v for i, v in targets.items() if current[i] != v}
+        if not updates:
+            then()
+            return
+        ctrl = self.controller
+        self._last_action = label or self.AUTO_LABELS.get(mode, f"Auto: {mode}")
+        self._run(self._last_action, lambda: ctrl.apply_partial(updates), after=then)
+
+    def _run(self, label, fn, on_ok=None, after=None):
         self._busy = True
         self._update_states()
         self.msg_var.set(f"{label}...")
@@ -205,13 +240,20 @@ class FlippersPanel:
             if ok and on_ok:
                 on_ok(result)
             wait = max(0, int(SETTLE_MS_AFTER_COMMAND - (time.time() - started) * 1000))
-            self.section.after(wait, lambda: self._finish(label, ok, result))
+            self.section.after(wait, lambda: self._finish(label, ok, result, after))
 
         self.worker.submit(f"flippers {label}", fn, done)
 
-    def _finish(self, label, ok, result):
+    def _finish(self, label, ok, result, after=None):
         if self._closing:
             return
+        try:
+            self._finish_show(label, ok, result)
+        finally:
+            if after is not None:
+                after()
+
+    def _finish_show(self, label, ok, result):
         self._busy = False
         if ok:
             self.msg_var.set(f"{time.strftime('%H:%M:%S')}  {label}")

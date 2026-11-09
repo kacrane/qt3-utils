@@ -575,6 +575,64 @@ class MicroscopeWindow:
                     self._panel_failed(key, e)
         self._attach_scan_tabs(hw)
         self._attach_camera_tab(hw)
+        self._attach_auto_mirrors()
+
+    # ----- automatic flip mirrors (File > Preferences) ----------------------
+    COUNTER_TABS = ("Image scan", "XYZ Optimization", "Line scan")
+
+    def _attach_auto_mirrors(self):
+        """Camera tab -> mirrors to the camera; scan tabs, a scan or the scope
+        starting -> mirrors to the photon counter. Only when switched on in
+        File > Preferences, and only the mirrors the profile lists under
+        flippers: auto:, so the excitation choice is kept."""
+        fp = getattr(self, "flippers_panel", None)
+        self._auto_ready = False
+        if fp is None or not fp.auto_targets:
+            return
+        fp.auto_enabled = lambda: bool(self.prefs.get("auto_mirrors", False))
+        detector = (self.profile.get("hardware", {}).get("scope") or {}).get("detector") or "SPCM"
+        fp.AUTO_LABELS = {"camera": "Auto: Camera", "counter": f"Auto: {detector}"}
+        to_counter = lambda go: fp.auto_switch("counter", go)  # noqa: E731
+        if getattr(self, "scope_panel", None) is not None:
+            self.scope_panel.before_counting = to_counter
+        if getattr(self, "scan_engine", None) is not None:
+            self.scan_engine.before_counting = to_counter
+        self.tabs.bind("<<NotebookTabChanged>>", lambda e: self._auto_for_tab(), add="+")
+        # Not at launch: the mirrors come back as they were left.
+        self.window.after(1500, lambda: setattr(self, "_auto_ready", True))
+
+    def _current_tab_name(self):
+        try:
+            current = self.tabs.select()
+        except tk.TclError:
+            return None
+        return next((n for n, p in self.tab_pages.items() if str(p) == current), None)
+
+    def _auto_for_tab(self):
+        fp = getattr(self, "flippers_panel", None)
+        if fp is None or not getattr(self, "_auto_ready", False) or not self.prefs.get("auto_mirrors"):
+            return
+        name = self._current_tab_name()
+        if name == "Camera":
+            engine = getattr(self, "scan_engine", None)
+            if engine is not None and engine.busy:
+                fp.msg_var.set(f"Mirrors left on the counter: {engine.busy}")
+                return
+            fp.auto_switch("camera")
+        elif name in self.COUNTER_TABS:
+            fp.auto_switch("counter")
+
+    def _auto_mirrors_text(self):
+        fp = getattr(self, "flippers_panel", None)
+        if fp is None or not fp.auto_targets:
+            return None
+        names = list(fp.cfg.flipper_names)
+
+        def desc(mode):
+            t = fp.auto_targets.get(mode) or {}
+            return ", ".join(f"{names[i]} {'up' if v else 'down'}" for i, v in sorted(t.items())) or "nothing"
+        return (f"Camera tab: {desc('camera')}. Scan tabs, scans and the scope: {desc('counter')}. "
+                "Other mirrors (the excitation choice) are left alone. Not while a scan is running.")
 
     def _attach_camera_tab(self, hw):
         """Camera tab (qt3camera): live view from the setup's camera."""
@@ -658,12 +716,15 @@ class MicroscopeWindow:
     # ----- preferences -----------------------------------------------------
     def open_preferences(self):
         prefs_mod.PreferencesDialog(self.window, prefs_mod.load(), self.profile_path, self._prefs_saved,
-                                    scale=self.scale, config_locked=self.config_locked)
+                                    scale=self.scale, config_locked=self.config_locked,
+                                    auto_mirrors_text=self._auto_mirrors_text())
 
     def _prefs_saved(self, prefs, restart):
         self.prefs = prefs
         if restart:
             self.restart()
+        else:
+            self._auto_for_tab()  # switched on: match the tab in front now
 
     def restart(self):
         """Close everything and start QT3 Microscope again with the same

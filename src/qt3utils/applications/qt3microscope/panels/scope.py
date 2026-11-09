@@ -89,6 +89,9 @@ class ScopePanel:
         self._after_stop = None
         # Set by the window: returns a reason (str) while a scan owns the counter.
         self.blocked = lambda: ""
+        # Called with the start function: lets the window move the flip
+        # mirrors to the photon counter first (File > Preferences).
+        self.before_counting = lambda go: go()
         self._build(section.body)
         self._enable_buttons()
         hub.on_close(self.close)
@@ -238,11 +241,14 @@ class ScopePanel:
         self._set_buttons(start=True, pause=False, reset=False, save=False, settings=True)
 
     # -- actions -----------------------------------------------------------
-    def start(self):
+    def start(self, _mirrors_ready=False):
         if self.running or self._job_out:
             return
         if self.blocked():
             self.msg_var.set(self.blocked())
+            return
+        if not _mirrors_ready:
+            self.before_counting(lambda: self.start(_mirrors_ready=True))
             return
         if not self.data_x:  # sample time and raw counts only change after Reset
             try:

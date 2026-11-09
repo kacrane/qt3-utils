@@ -1,14 +1,20 @@
 """
 Preferences for QT3 Microscope (File > Preferences...).
 
-Two settings, kept in ~/.qt3utils/qt3microscope_prefs.json:
+Settings, kept in ~/.qt3utils/qt3microscope_prefs.json:
 
     dark     Light or dark colours (theme.py).
     profile  Which setup profile to load: "shortcut" (whatever the desktop
              shortcut or command line says, the default), "VQLM", "TQLM",
              or the path of another profile YAML file.
+    auto_mirrors  Flip the mirrors to the camera when the Camera tab is
+             opened, and to the photon counter when the scan tabs are
+             opened or a scan or the scope starts (the profile's
+             flippers: auto: section says which mirrors). The excitation
+             mirror is left alone. Off by default.
 
-Both take effect when the program starts, so the dialog offers to restart.
+The theme and profile take effect when the program starts, so the dialog
+offers to restart; auto_mirrors takes effect at once.
 A --config path given on the command line still wins over the preference.
 """
 
@@ -20,7 +26,7 @@ from tkinter import filedialog, ttk
 from qt3utils.applications.qt3microscope.theme import C
 
 PREFS_PATH = os.path.join(os.path.expanduser("~"), ".qt3utils", "qt3microscope_prefs.json")
-DEFAULTS = {"dark": False, "profile": "shortcut"}
+DEFAULTS = {"dark": False, "profile": "shortcut", "auto_mirrors": False}
 
 
 def load():
@@ -33,6 +39,7 @@ def load():
     except (OSError, ValueError):
         pass
     prefs["dark"] = bool(prefs["dark"])
+    prefs["auto_mirrors"] = bool(prefs["auto_mirrors"])
     if not isinstance(prefs["profile"], str) or not prefs["profile"].strip():
         prefs["profile"] = "shortcut"
     return prefs
@@ -61,7 +68,8 @@ def resolve_profile(prefs, setup_arg, config_arg):
 class PreferencesDialog:
     """Modal dialog. on_save(prefs, restart) is called when the user saves."""
 
-    def __init__(self, parent, prefs, current_profile, on_save, scale=1.0, config_locked=False):
+    def __init__(self, parent, prefs, current_profile, on_save, scale=1.0, config_locked=False,
+                 auto_mirrors_text=None):
         self.on_save = on_save
         self.top = top = tk.Toplevel(parent)
         top.title("Preferences")
@@ -78,6 +86,14 @@ class PreferencesDialog:
         self.dark = tk.BooleanVar(value=prefs["dark"])
         ttk.Radiobutton(look, text="Light", variable=self.dark, value=False).pack(anchor="w")
         ttk.Radiobutton(look, text="Dark", variable=self.dark, value=True).pack(anchor="w")
+
+        mir = ttk.LabelFrame(body, text="Flip mirrors", padding=px(8))
+        mir.pack(fill="x", pady=(px(10), 0))
+        self.auto_mirrors = tk.BooleanVar(value=prefs.get("auto_mirrors", False))
+        ttk.Checkbutton(mir, text="Switch the mirrors automatically", variable=self.auto_mirrors).pack(anchor="w")
+        ttk.Label(mir, text=auto_mirrors_text or "This profile has no automatic mirror settings "
+                  "(flippers: auto: in the profile).", foreground=C.muted, wraplength=px(420),
+                  justify="left").pack(anchor="w", padx=(px(20), 0))
 
         prof = ttk.LabelFrame(body, text="Setup profile", padding=px(8))
         prof.pack(fill="x", pady=(px(10), 0))
@@ -105,15 +121,16 @@ class PreferencesDialog:
             ttk.Label(prof, text="This window was started with --config, which overrides this choice.",
                       foreground=C.orange, wraplength=px(420), justify="left").pack(anchor="w")
 
-        self.msg = ttk.Label(body, text="Changes take effect when QT3 Microscope restarts.",
+        self.msg = ttk.Label(body, text="Appearance and profile take effect when QT3 Microscope restarts; "
+                                        "the mirror setting takes effect at once.",
                              foreground=C.muted, wraplength=px(420), justify="left")
         self.msg.pack(anchor="w", pady=(px(10), 0))
 
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(px(10), 0))
         ttk.Button(btns, text="Cancel", command=top.destroy).pack(side="right")
-        ttk.Button(btns, text="Save", command=lambda: self._save(False)).pack(side="right", padx=px(4))
-        ttk.Button(btns, text="Save and restart", command=lambda: self._save(True)).pack(side="right")
+        ttk.Button(btns, text="Save and restart", command=lambda: self._save(True)).pack(side="right", padx=px(4))
+        ttk.Button(btns, text="Save", command=lambda: self._save(False)).pack(side="right")
         top.bind("<Escape>", lambda e: top.destroy())
         self._sync()
 
@@ -148,7 +165,7 @@ class PreferencesDialog:
                 self.msg.configure(text="Choose a profile file that exists.", foreground=C.red)
                 return
             choice = os.path.abspath(path)
-        prefs = {"dark": bool(self.dark.get()), "profile": choice}
+        prefs = {"dark": bool(self.dark.get()), "profile": choice, "auto_mirrors": bool(self.auto_mirrors.get())}
         try:
             save(prefs)
         except OSError as e:

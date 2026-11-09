@@ -108,6 +108,13 @@ QT3MICROSCOPE:
         - {name: M6, line: port1/line3}
         - {name: M7, line: port1/line4}
         - {name: M8, line: port1/line5}
+      # Automatic switching (File > Preferences): which mirrors move when the
+      # Camera tab opens ("camera") and when the scan tabs open or a scan or the
+      # scope starts ("counter"). M5 (532 nm / SuperK) is not listed, so the
+      # excitation choice stays. counter = the Confocal presets (M8 up).
+      auto:
+        camera: {M6: up, M7: down}
+        counter: {M6: down, M8: up}
       presets:
         - {label: "532nm - Camera", targets: {M5: up, M6: up, M7: down}}
         - {label: "532nm - SPCM - Confocal", targets: {M5: up, M6: down, M8: up}}

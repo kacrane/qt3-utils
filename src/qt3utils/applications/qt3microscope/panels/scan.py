@@ -101,6 +101,9 @@ class ScanEngine:
         self.n_scans = {}  # numbered separately per kind: image scans, line scans
         self.last_save_directory = None
         self.closing = False
+        # Called with the scan's start function: lets the window move the flip
+        # mirrors to the photon counter first (File > Preferences).
+        self.before_counting = lambda go: go()
         hub.on_close(self.close)
         if stage is not None:
             stage.blocked = lambda: self.busy
@@ -137,7 +140,7 @@ class ScanEngine:
 
     def _acquired(self, scope_was_running, then):
         self._scope_was_running = scope_was_running
-        then()
+        self.before_counting(then)
 
     def release(self):
         self.busy = ""

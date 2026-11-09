@@ -94,6 +94,13 @@ QT3MICROSCOPE:
         - {name: M6, line: port0/line1}
         - {name: M7, line: port0/line2}
         - {name: M8, line: port0/line3}
+      # Automatic switching (File > Preferences): which mirrors move when the
+      # Camera tab opens ("camera") and when the scan tabs open or a scan or the
+      # scope starts ("counter"). M8 (white light / Santec) is not listed, so
+      # the excitation choice stays. Read from the presets; to be confirmed.
+      auto:
+        camera: {M6: up}
+        counter: {M6: down, M7: up}
       presets:
         - {label: "White Light", targets: {M6: up, M8: up}}
         - {label: "Camera", targets: {M6: up, M8: down}}
