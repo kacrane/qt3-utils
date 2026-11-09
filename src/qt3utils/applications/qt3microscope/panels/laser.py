@@ -1,7 +1,7 @@
 """
 Laser panel: turns the VQLM laser on and off through the QICK-DAWG board.
 
-Same behaviour as the standalone qt3laser app, placed in a drawer section.
+Same behavior as the standalone qt3laser app, placed in a drawer section.
 The section header keeps the laser state and ON/OFF buttons visible even
 when the section is folded.
 """
@@ -46,8 +46,8 @@ def save_last_state(state):
 
 
 class StripedBanner(tk.Canvas):
-    """A coloured banner with bold text. With two colours it is drawn in
-    diagonal stripes (unknown state: yellow plus the last known colour)."""
+    """A colored banner with bold text. With two colors it is drawn in
+    diagonal stripes (unknown state: yellow plus the last known color)."""
 
     def __init__(self, parent, font=("TkDefaultFont", 14, "bold")):
         self.font = font
@@ -58,8 +58,8 @@ class StripedBanner(tk.Canvas):
         self._spec = ("", ORANGE, None)
         self.bind("<Configure>", lambda e: self._redraw())
 
-    def show(self, text, colour, colour2=None):
-        self._spec = (text, colour, colour2)
+    def show(self, text, color, color2=None):
+        self._spec = (text, color, color2)
         self._redraw()
 
     def _redraw(self):
@@ -88,7 +88,7 @@ class LaserPanel:
         self.client = client
         self.worker = hub.worker("qickdawg")
         self.health_check_ms = int(health_check_s * 1000)
-        self.set_status = set_status or (lambda value, colour, colour2=None: None)
+        self.set_status = set_status or (lambda value, color, color2=None: None)
         self._busy = False
         self._closing = False
         self._build(section.body)
@@ -150,10 +150,10 @@ class LaserPanel:
                 self.set_status("?", ORANGE)
             else:
                 word = "ON" if last else "OFF"
-                colour = GREEN if last else GRAY
-                self.state_label.show(f"Laser: unknown, {word} last", ORANGE, colour)
+                color = GREEN if last else GRAY
+                self.state_label.show(f"Laser: unknown, {word} last", ORANGE, color)
                 self.section.set_summary(f"unknown, {word} last")
-                self.set_status(f"? {word} last", ORANGE, colour)
+                self.set_status(f"? {word} last", ORANGE, color)
                 if when:
                     last_note = f"Last set {word} at {when}."
                     note = f"{note} {last_note}" if note else last_note

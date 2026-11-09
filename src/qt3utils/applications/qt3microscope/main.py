@@ -17,7 +17,7 @@ so setup differences live in the profiles, not in separate branches.
 Desktop shortcut (no terminal window): run make_desktop_shortcut.ps1 once.
 Terminal output goes to the Log section under the scope instead.
 
-File > Preferences chooses light or dark colours and the setup profile
+File > Preferences chooses light or dark colors and the setup profile
 (prefs.py); both apply on the next start, and the dialog can restart.
 
 Run:  python -m qt3utils.applications.qt3microscope.main
@@ -74,10 +74,21 @@ try:
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     _fh = logging.FileHandler(LOG_PATH)
     _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logger.addHandler(_fh)
-    logger.setLevel(logging.INFO)
+    # On the qt3utils logger, so warnings from the panels and hardware reach the file too.
+    logging.getLogger("qt3utils").addHandler(_fh)
 except OSError:
     pass
+logger.setLevel(logging.INFO)
+
+
+def set_verbose_logging(verbose):
+    """File > Preferences > Verbose logging: every qt3utils message down to
+    DEBUG goes to the Log section and qt3microscope.log. Off: this window's own
+    messages from INFO up, other modules' from WARNING up (as before)."""
+    logging.getLogger("qt3utils").setLevel(logging.DEBUG if verbose else logging.NOTSET)
+    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    if verbose:
+        logger.info("Verbose logging is on (File > Preferences).")
 
 
 def profile_path(setup=None, path=None):
@@ -568,8 +579,9 @@ class MicroscopeWindow:
                 try:
                     mod = __import__(f"qt3utils.applications.qt3microscope.panels.{module}", fromlist=[cls])
                     self._clear_note(key)
+                    extra = {"setup": self.setup} if key == "stage" else {}
                     panel = getattr(mod, cls)(self.sections[key], self.hub, hw[key],
-                                              set_status=self._chip_setter(chip))
+                                              set_status=self._chip_setter(chip), **extra)
                     setattr(self, f"{key}_panel", panel)
                 except Exception as e:
                     self._panel_failed(key, e)
@@ -720,7 +732,12 @@ class MicroscopeWindow:
                                     auto_mirrors_text=self._auto_mirrors_text())
 
     def _prefs_saved(self, prefs, restart):
+        was_verbose = bool(self.prefs.get("verbose_log", False))
         self.prefs = prefs
+        if bool(prefs.get("verbose_log", False)) != was_verbose:
+            set_verbose_logging(prefs.get("verbose_log", False))
+            if not prefs.get("verbose_log", False):
+                logger.info("Verbose logging is off.")
         if restart:
             self.restart()
         else:
@@ -837,6 +854,7 @@ def main(is_root_process=True, argv=None):
         if is_root_process:
             _wait_for_previous()
         prefs = prefs_mod.load()
+        set_verbose_logging(prefs.get("verbose_log", False))
         setup, path = prefs_mod.resolve_profile(prefs, args.setup, args.config)
         path = profile_path(setup, path)
         try:

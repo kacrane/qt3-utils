@@ -72,7 +72,7 @@ class FlippersPanel:
         self.section = section
         self.worker = hub.worker("daq")
         self.cfg = load_flipper_config_dict(cfg)
-        self.set_status = set_status or (lambda value, colour: None)
+        self.set_status = set_status or (lambda value, color: None)
         self.controller = None
         self._busy = False
         self._closing = False
@@ -128,7 +128,7 @@ class FlippersPanel:
         pf.pack(fill="x")
         self.preset_btns = []
         for j, pr in enumerate(self.cfg.presets):
-            # tk buttons, so the preset the mirrors are in now can be coloured.
+            # tk buttons, so the preset the mirrors are in now can be colored.
             b = tk.Button(pf, text=pr.label, command=lambda pr=pr: self._do(pr.label, "apply_partial", pr.targets_dict()))
             b.preset_targets = pr.targets_dict()
             b.normal_look = {"bg": b.cget("bg"), "fg": b.cget("fg"), "font": b.cget("font"),
@@ -172,7 +172,7 @@ class FlippersPanel:
             self.set_status("off", GRAY)
 
     def _show_active_preset(self, levels):
-        """Colour the preset buttons whose mirrors all match the levels now."""
+        """Color the preset buttons whose mirrors all match the levels now."""
         for b in self.preset_btns:
             targets = getattr(b, "preset_targets", None) or {}
             active = (self._connected() and bool(targets)

@@ -1,14 +1,14 @@
 """
-Light and dark colour themes for QT3 Microscope.
+Light and dark color themes for QT3 Microscope.
 
-Panels take colours from theme.C at the moment they draw (theme.C.muted,
-theme.C.text, ...), never as hex strings, so one switch here recolours the
+Panels take colors from theme.C at the moment they draw (theme.C.muted,
+theme.C.text, ...), never as hex strings, so one switch here recolors the
 whole window. apply() runs once, before any widget exists; the theme is
 chosen in File > Preferences and takes effect on the next start.
 
 Saved PNGs stay light in both themes (save_figure).
 
-Status colours (green, orange, red, amber) keep their meaning in both
+Status colors (green, orange, red, amber) keep their meaning in both
 themes; the dark versions are only brightened where they are used as text.
 """
 
@@ -70,7 +70,7 @@ C = SimpleNamespace(**LIGHT)
 def apply(root, dark=False):
     """Set the theme for everything built after this call (call before building)."""
     C.__dict__.update(DARK if dark else LIGHT)
-    # Keep widgets.py's module colours (imported by older code) in step.
+    # Keep widgets.py's module colors (imported by older code) in step.
     from qt3utils.applications.qt3microscope import widgets
     widgets.GREEN, widgets.ORANGE, widgets.RED = C.green, C.orange, C.red
     widgets.GRAY, widgets.AMBER, widgets.HEADER_BG = C.faint, C.amber, C.header
@@ -98,7 +98,7 @@ def _apply_tk_dark(root):
         root.option_add(pattern, value)
     root.configure(background=C.bg)
 
-    # ttk widgets: the "clam" theme can be recoloured completely.
+    # ttk widgets: the "clam" theme can be recolored completely.
     s = ttk.Style(root)
     s.theme_use("clam")
     s.configure(".", background=C.bg, foreground=C.text, fieldbackground=C.field,
@@ -151,7 +151,7 @@ def _apply_matplotlib():
 
 def save_figure(fig, path, **kwargs):
     """Save a figure as PNG. Saved files are always light (black on white),
-    for papers and slides: in the dark theme the plot is recoloured for the
+    for papers and slides: in the dark theme the plot is recolored for the
     save and then put back."""
     if not C.dark:
         fig.savefig(path, **kwargs)
@@ -161,10 +161,10 @@ def save_figure(fig, path, **kwargs):
 
     def swap(obj, getter, setter, mapping):
         old = getattr(obj, getter)()
-        for dark_colour, light_colour in mapping:
+        for dark_color, light_color in mapping:
             try:
-                if same_color(old, dark_colour):
-                    getattr(obj, setter)(light_colour)
+                if same_color(old, dark_color):
+                    getattr(obj, setter)(light_color)
                     undo.append((getattr(obj, setter), old))
                     return
             except (ValueError, TypeError):

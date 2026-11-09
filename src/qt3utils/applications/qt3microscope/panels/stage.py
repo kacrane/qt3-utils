@@ -6,8 +6,11 @@ keyboard stepping) placed in a drawer section. The axes and their hardware
 come from the profile, like the qdlmove YAML.
 
 Differences from qdlmove:
-- Opening the window does not move the piezos (qdlmove set them to 0 at
-  launch). "Current" shows a dash until an axis is set once.
+- At launch the piezos go back to where they were when the program last
+  closed, if that was less than 2 hours ago (RESTORE_WITHIN_S), otherwise to
+  0, 0, 0 (as qdlmove did). The last position is kept in
+  ~/.qt3utils/qt3microscope_piezos_<setup>.json, and a "Go to last" button
+  moves back to it after a 0, 0, 0 start.
 - Keyboard stepping ignores keys typed into entry boxes, and only works
   while this section is open, so arrow keys elsewhere in the window can't
   move the stage by accident.
@@ -15,8 +18,12 @@ Differences from qdlmove:
   instead of queueing hundreds of moves.
 """
 
+import datetime
 import importlib
+import json
 import logging
+import os
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -34,6 +41,23 @@ STEP_KEYS = {
 }
 TYPING_CLASSES = {"Entry", "TEntry", "Spinbox", "TSpinbox", "Text", "TCombobox"}
 
+STATE_DIR = os.path.join(os.path.expanduser("~"), ".qt3utils")
+RESTORE_WITHIN_S = 2 * 3600  # same as the window state in main.py
+
+
+def load_last_positions(path, n_axes):
+    """(positions, saved time) from the state file, or (None, None)."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        pos = [float(p) for p in saved["positions"]]
+        when = float(saved["time"])
+        if len(pos) != n_axes:
+            return None, None
+        return pos, when
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
+
 
 def make_positioner(spec):
     """Build a positioner from {import_path, class_name, configure} (qdlmove YAML style)."""
@@ -45,14 +69,14 @@ def make_positioner(spec):
 
 
 class StagePanel:
-    def __init__(self, section, hub, cfg, set_status=None):
+    def __init__(self, section, hub, cfg, set_status=None, setup="default"):
         self.section = section
         self.worker = hub.worker("daq")
         self.axes = cfg.get("axes", [])
         self.precision = int(cfg.get("precision", 2))
         self.default_step = float(cfg.get("step", 0.1))
         self.title = cfg.get("title", "Piezos")
-        self.set_status = set_status or (lambda value, colour: None)
+        self.set_status = set_status or (lambda value, color: None)
         self.positioners = [None] * len(self.axes)
         self.positions = [None] * len(self.axes)
         self._busy = [False] * len(self.axes)
@@ -61,10 +85,15 @@ class StagePanel:
         # Set by the window: returns a reason (str) while another tool (a scan)
         # owns the piezos, or "" when the stage is free to move.
         self.blocked = lambda: ""
+        self.state_path = os.path.join(STATE_DIR, f"qt3microscope_piezos_{setup}.json")
+        self.last_positions, self.last_time = load_last_positions(self.state_path, len(self.axes))
+        self._saved = None
         self._build(section.body)
         self.window = section.winfo_toplevel()
         self._bindings = []
         hub.on_close(self.close)
+        if self.axes:
+            section.after(300, self._launch_move)
 
     # -- GUI ---------------------------------------------------------------
     def _build(self, body):
@@ -90,6 +119,14 @@ class StagePanel:
             cur.grid(row=r, column=4, padx=2)
             self.rows.append({"set": set_e, "step": step_e, "cur": cur, "btn": set_b})
 
+        last = ttk.Frame(body)
+        last.pack(fill="x", pady=(6, 0))
+        self.last_btn = ttk.Button(last, text="Go to last", command=self.go_to_last)
+        self.last_btn.pack(side="left")
+        self.last_var = tk.StringVar(value="")
+        ttk.Label(last, textvariable=self.last_var, foreground=GRAY).pack(side="left", padx=6)
+        self._show_last()
+
         keys = ttk.Frame(body)
         keys.pack(fill="x", pady=(6, 0))
         self.step_var = tk.IntVar(value=0)
@@ -108,7 +145,85 @@ class StagePanel:
         for ax in self.axes:
             c = (ax.get("configure") or {})
             chans.append(f"{ax.get('label', '?')} {c.get('device_name', '')}/{c.get('write_channel', '')}")
-        return ", ".join(chans) + ". Current shows — until an axis is set."
+        return ", ".join(chans) + "."
+
+    # -- launch position and "Go to last" --------------------------------------
+    def _fmt(self, positions):
+        return ", ".join(f"{p:.{self.precision}f}" for p in positions) + " µm"
+
+    def _when(self, t):
+        d = datetime.datetime.fromtimestamp(t)
+        today = datetime.date.today()
+        if d.date() == today:
+            return d.strftime("%H:%M today")
+        if d.date() == today - datetime.timedelta(days=1):
+            return d.strftime("%H:%M yesterday")
+        return d.strftime("%Y-%m-%d %H:%M")
+
+    def _show_last(self):
+        if self.last_positions is None:
+            self.last_var.set("No last position saved yet.")
+            self.last_btn.configure(state="disabled")
+        else:
+            self.last_var.set(f"{self._fmt(self.last_positions)} ({self._when(self.last_time)})")
+            self.last_btn.configure(state="normal")
+
+    def _launch_move(self):
+        """Last position if it was saved within RESTORE_WITHIN_S, else 0, 0, 0."""
+        if self._closing:
+            return
+        recent = (self.last_positions is not None
+                  and 0 <= time.time() - self.last_time <= RESTORE_WITHIN_S)
+        targets = list(self.last_positions) if recent else [0.0] * len(self.axes)
+        if recent:
+            note = f"Launch: back to the last position, {self._fmt(targets)}."
+        elif self.last_positions is not None:
+            note = (f"Launch: to 0, 0, 0 (last position is over 2 hours old; "
+                    f"Go to last moves back to it).")
+        else:
+            note = "Launch: to 0, 0, 0."
+        logger.info(note)
+        self.msg_var.set(note)
+        self._fill_set_boxes(targets)
+        for i, t in enumerate(targets):
+            self._pending[i] = 0.0
+            self._submit_move(i, t, keep_msg=True)
+
+    def _fill_set_boxes(self, targets):
+        for row, t in zip(self.rows, targets):
+            row["set"].delete(0, "end")
+            row["set"].insert(0, f"{t:.{self.precision}f}")
+
+    def go_to_last(self):
+        if self.last_positions is None:
+            return
+        if self.blocked():
+            self.msg_var.set(self.blocked())
+            return
+        if any(self._busy):
+            self.msg_var.set("Still moving, try again.")
+            return
+        self.msg_var.set(f"Going to the last position, {self._fmt(self.last_positions)}.")
+        self._fill_set_boxes(self.last_positions)
+        for i, t in enumerate(self.last_positions):
+            self._pending[i] = 0.0
+            self._submit_move(i, t, keep_msg=True)
+
+    def _save_positions(self):
+        if any(p is None for p in self.positions):
+            return
+        rounded = [round(p, 6) for p in self.positions]
+        if rounded == self._saved:
+            return
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            tmp = self.state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"positions": rounded, "time": time.time()}, f)
+            os.replace(tmp, self.state_path)
+            self._saved = rounded
+        except OSError as e:
+            logger.warning("could not save piezo positions: %s", e)
 
     def _show_positions(self):
         for row, pos in zip(self.rows, self.positions):
@@ -119,6 +234,7 @@ class StagePanel:
         self.section.set_summary(summary)
         if known:
             self.set_status(" ".join(f"{p:.1f}" for p in self.positions if p is not None), GREEN)
+        self._save_positions()
 
     # -- keyboard stepping ----------------------------------------------------
     def rebind_keys(self):
@@ -201,11 +317,11 @@ class StagePanel:
         self._pending[i] = 0.0
         self._submit_move(i, target)
 
-    def _submit_move(self, i, target):
+    def _submit_move(self, i, target, keep_msg=False):
         self._busy[i] = True
         self.worker.submit(f"move {self.axes[i].get('label', i)}",
                            lambda: self._daq_move(i, target),
-                           lambda ok, res: self._moved(i, target, ok, res))
+                           lambda ok, res: self._moved(i, target, ok, res, keep_msg))
 
     def positioner(self, i):
         """The shared positioner for axis i (built on first use). Call on the DAQ worker."""
@@ -234,13 +350,14 @@ class StagePanel:
         p.go_to_position(target)
         return target
 
-    def _moved(self, i, target, ok, result):
+    def _moved(self, i, target, ok, result, keep_msg=False):
         self._busy[i] = False
         if self._closing:
             return
         if ok:
             self.positions[i] = result
-            self.msg_var.set(self._hardware_text())
+            if not keep_msg:
+                self.msg_var.set(self._hardware_text())
             self._show_positions()
             self._flush(i)
         else:

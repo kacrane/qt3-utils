@@ -13,7 +13,7 @@ Differences from the standalone qdlscan windows:
   can be looked at and saved again.
 - The piezos are the same ones the Stage drawer moves, and nothing moves
   when the window opens (qdlscan set them to 0). An axis whose position is
-  not known yet is treated as 0 when a scan is centred on it.
+  not known yet is treated as 0 when a scan is centered on it.
 - While a scan runs, the scope pauses (they share the DAQ counter) and
   restarts afterwards; the Stage drawer won't move the piezos.
 - Each image row is its own DAQ job, so Pause takes effect after the
@@ -53,20 +53,20 @@ def _qt3utils_version():
         return "unknown"
 
 
-def centred_range(centre, span, lo, hi):
-    """(min, max, centre) of a scan of width span around centre, shifted to stay in [lo, hi] (as qdlscan)."""
-    mn, mx = centre - span / 2, centre + span / 2
+def centered_range(center, span, lo, hi):
+    """(min, max, center) of a scan of width span around center, shifted to stay in [lo, hi] (as qdlscan)."""
+    mn, mx = center - span / 2, center + span / 2
     if mn < lo:
         shift = lo - mn
-        mn, mx, centre = mn + shift, mx + shift, centre + shift
+        mn, mx, center = mn + shift, mx + shift, center + shift
     if mx > hi:
         shift = hi - mx
-        mn, mx, centre = mn + shift, mx + shift, centre + shift
-    return mn, mx, centre
+        mn, mx, center = mn + shift, mx + shift, center + shift
+    return mn, mx, center
 
 
 def gaussian_peak(xs, ys, start, lo, hi):
-    """qdlscan's Gaussian optimization: fitted centre, or start if the fit fails."""
+    """qdlscan's Gaussian optimization: fitted center, or start if the fit fails."""
     from scipy.optimize import curve_fit
 
     def f(x, a, x0, sigma, c):
@@ -445,13 +445,13 @@ class ImageScanTab(_PlotTab):
             self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
 
     def _show_position(self):
-        """Keep "centered on the current X/Y position" up to date (the stage, scans
+        """Keep "centered on the reference position" up to date (the stage, scans
         and XYZ Optimization all move the piezos)."""
         if self.engine.closing:
             return
         x, y = self.engine.position("x"), self.engine.position("y")
         fmt = lambda v: "—" if v is None else f"{v:.2f}"
-        self.pos_var.set(f"Scans are centered on the current X/Y position: ({fmt(x)}, {fmt(y)}) µm")
+        self.pos_var.set(f"Scans are centered on the reference position: ({fmt(x)}, {fmt(y)}) µm")
         if (x, y) != getattr(self, "_last_xy", None):
             self._last_xy = (x, y)
             if self.running is None:  # move the empty frame / position marker
@@ -517,7 +517,7 @@ class ImageScanTab(_PlotTab):
         lo, hi = self.norm if self.norm[0] is not None else (np.nanmin(z) if np.any(np.isfinite(z)) else 0.0,
                                                               np.nanmax(z) if np.any(np.isfinite(z)) else 1.0)
         g = np.clip((z - lo) / ((hi - lo) or 1.0), 0, 1) * 255
-        g = np.where(np.isfinite(z), g, int(C.plot_unscanned[1:3], 16))  # rows not scanned yet: grey
+        g = np.where(np.isfinite(z), g, int(C.plot_unscanned[1:3], 16))  # rows not scanned yet: gray
         im = Image.fromarray(np.flipud(g).astype(np.uint8), "L").resize((self.thumb_px, self.thumb_px), Image.NEAREST)
         return ImageTk.PhotoImage(im)
 
@@ -560,8 +560,8 @@ class ImageScanTab(_PlotTab):
             t = self.thumbs.get(sc["id"])
             if t is None:
                 continue
-            colour = C.accent if sc is self.shown else (C.pin if sc is self.pinned else C.border)
-            t["frame"].configure(highlightbackground=colour, highlightcolor=colour)
+            color = C.accent if sc is self.shown else (C.pin if sc is self.pinned else C.border)
+            t["frame"].configure(highlightbackground=color, highlightcolor=color)
             t["x"].configure(state="disabled" if sc is self.running or sc is self.paused else "normal")
 
     def _pick_scan(self, scan):
@@ -662,8 +662,8 @@ class ImageScanTab(_PlotTab):
         unknown = [a for a in ("x", "y", "z") if self.engine.position(a) is None]
         before = tuple(self.engine.position(a) for a in ("x", "y"))  # go back here after
         pos = [self.engine.position(a) or 0.0 for a in ("x", "y", "z")]
-        mn1, mx1, c1 = centred_range(pos[0], rng, *self.engine.limits("x"))
-        mn2, mx2, c2 = centred_range(pos[1], rng, *self.engine.limits("y"))
+        mn1, mx1, c1 = centered_range(pos[0], rng, *self.engine.limits("x"))
+        mn2, mx2, c2 = centered_range(pos[1], rng, *self.engine.limits("y"))
         sid = self.engine.next_id("image")
         ts = datetime.datetime.now()
         scan = {"id": sid, "timestamp": ts, "axis_1": "x", "axis_2": "y", "range": rng, "n_pixels": n,
@@ -704,15 +704,15 @@ class ImageScanTab(_PlotTab):
         """End the scan early and go back to where it started."""
         if self.running is not None:
             self._cancel = True
-            self.status.set("Cancelling after this row...")
+            self.status.set("Canceling after this row...")
             self._buttons()
         elif self.paused is not None:
             scan = self.paused
             self._cancel = True
             self._buttons()
             if not self.engine.acquire("An image scan is ending.", lambda: self._finish(
-                    scan, f"Image {scan['id']} cancelled at row {scan['index']} of {scan['n_pixels']}.",
-                    home=True, cancelled=True)):
+                    scan, f"Image {scan['id']} canceled at row {scan['index']} of {scan['n_pixels']}.",
+                    home=True, canceled=True)):
                 self._cancel = False
                 self.status.set(f"Busy: {self.engine.busy}")
                 self._buttons()
@@ -762,8 +762,8 @@ class ImageScanTab(_PlotTab):
         if scan["index"] >= scan["n_pixels"]:
             return self._finish(scan, f"Image {scan['id']} complete.", home=True)
         if self._cancel:
-            return self._finish(scan, f"Image {scan['id']} cancelled at row {scan['index']} of {scan['n_pixels']}.",
-                                home=True, cancelled=True)
+            return self._finish(scan, f"Image {scan['id']} canceled at row {scan['index']} of {scan['n_pixels']}.",
+                                home=True, canceled=True)
         if self._pause:
             return self._finish(scan, f"Paused at row {scan['index']} of {scan['n_pixels']}. Continue resumes it.",
                                 home=False, paused=True)
@@ -784,7 +784,7 @@ class ImageScanTab(_PlotTab):
             self.status.set(f"Image {scan['id']}: row {i + 1} of {scan['n_pixels']}")
         self._row_or_fail(ok, result)
 
-    def _finish(self, scan, text, home, paused=False, cancelled=False):
+    def _finish(self, scan, text, home, paused=False, canceled=False):
         def stop_job():
             c = self.engine.ctrl()
             c.counter_controller.stop()
@@ -797,8 +797,8 @@ class ImageScanTab(_PlotTab):
             self.running = None
             self.paused = scan if paused else None
             self._pause = self._cancel = False
-            if cancelled:
-                scan["title"] += "  (cancelled)"
+            if canceled:
+                scan["title"] += "  (canceled)"
                 self.pick.configure(values=[s["title"] for s in self.scans])
                 if self.shown in self.scans:
                     self.pick.current(self.scans.index(self.shown))
@@ -868,8 +868,8 @@ class ImageScanTab(_PlotTab):
             rng = float(self.range_e.get())
         except (AttributeError, ValueError):
             rng = float(self.cfg.get("range", 80))
-        cx = centred_range(self.engine.position("x") or 0.0, rng, *self.engine.limits("x"))
-        cy = centred_range(self.engine.position("y") or 0.0, rng, *self.engine.limits("y"))
+        cx = centered_range(self.engine.position("x") or 0.0, rng, *self.engine.limits("x"))
+        cy = centered_range(self.engine.position("y") or 0.0, rng, *self.engine.limits("y"))
         return [cx[0], cx[1], cy[0], cy[1]]
 
     @staticmethod
@@ -885,7 +885,7 @@ class ImageScanTab(_PlotTab):
         ax.xaxis.set_major_locator(MaxNLocator(4))
         ax.yaxis.set_major_locator(MaxNLocator(4))
         ax.grid(alpha=0.3)
-        ax.set_facecolor(C.plot_unscanned if scan is not None else C.plot_bg)  # grey = rows not scanned yet
+        ax.set_facecolor(C.plot_unscanned if scan is not None else C.plot_bg)  # gray = rows not scanned yet
         if scan is None:
             ax.set_xlim(frame[0], frame[1])
             ax.set_ylim(frame[2], frame[3])
@@ -1073,7 +1073,7 @@ class LineScanTab(_PlotTab):
         note = "" if start is not None else f" ({axis.upper()} not set yet, using 0)"
         start = start or 0.0
         lo, hi = self.engine.limits(axis)
-        mn, mx, _ = centred_range(start, rng, lo, hi)
+        mn, mx, _ = centered_range(start, rng, lo, hi)
         sid = self.engine.next_id("line")
         ts = datetime.datetime.now()
         pos = tuple(self.engine.position(a) or 0.0 for a in ("x", "y", "z"))
@@ -1122,7 +1122,7 @@ class LineScanTab(_PlotTab):
 
     def redraw(self):
         """Three plots side by side, X | Y | Z. Every line scan of the session is
-        drawn on its axis's plot in turn through the colour cycle; the newest one
+        drawn on its axis's plot in turn through the color cycle; the newest one
         on each plot is drawn heavier, with a dashed line at the position it moved
         to. The title shows where the other two piezos were for the newest scan;
         hovering over a line shows that scan's number and the other two piezos.
@@ -1140,7 +1140,7 @@ class LineScanTab(_PlotTab):
         self.axes_by_name = {}
         self._hover_lines = []  # (axes, Line2D, scan)
         self._hover_note = None
-        colours = [c["color"] for c in __import__("matplotlib").rcParams["axes.prop_cycle"]]
+        colors = [c["color"] for c in __import__("matplotlib").rcParams["axes.prop_cycle"]]
         for k, name in enumerate(("x", "y", "z")):
             ax = self.fig.add_axes([(left + k * (pw + gap)) / w, bottom / h, pw / w, ph / h])
             self.axes_by_name[name] = ax
@@ -1159,22 +1159,22 @@ class LineScanTab(_PlotTab):
             others = [o for o in ("x", "y", "z") if o != name]
             for n, sc in enumerate(scans):
                 newest = n == len(scans) - 1
-                colour = colours[n % len(colours)]
+                color = colors[n % len(colors)]
                 vec = sc["start_position_vector"]
                 label = f"{sc['id']}  " + "  ".join(f"{o} {vec[AXIS_INDEX[o]]:.2f}" for o in others)
                 if np.all(np.isnan(sc["data_y"])):
-                    ax.plot([], [], color=colour, linewidth=2.4 if newest else 1.0, label=label + " …")
+                    ax.plot([], [], color=color, linewidth=2.4 if newest else 1.0, label=label + " …")
                 else:
-                    (line,) = ax.plot(sc["data_x"], sc["data_y"], color=colour, label=label,
+                    (line,) = ax.plot(sc["data_x"], sc["data_y"], color=color, label=label,
                                       linewidth=2.4 if newest else 1.0, alpha=1.0 if newest else 0.75,
                                       zorder=3 if newest else 2)
                     self._hover_lines.append((ax, line, sc))
                 if newest and sc["final_position_axis"] is not None:
-                    ax.axvline(sc["final_position_axis"], color=colour, linewidth=1.2, linestyle="--", zorder=1)
+                    ax.axvline(sc["final_position_axis"], color=color, linewidth=1.2, linestyle="--", zorder=1)
             ax.set_xlim(min(sc["min_position"] for sc in scans), max(sc["max_position"] for sc in scans))
             vec = scans[-1]["start_position_vector"]
             ax.set_title("  ".join(f"{o} {vec[AXIS_INDEX[o]]:.2f}" for o in others) + " µm",
-                         fontsize=FONT, color=colours[(len(scans) - 1) % len(colours)], pad=3)
+                         fontsize=FONT, color=colors[(len(scans) - 1) % len(colors)], pad=3)
         # One intensity scale for X, Y and Z so peak heights can be compared across.
         data = [sc["data_y"] for sc in self.scans if not np.all(np.isnan(sc["data_y"]))]
         if data:
@@ -1202,7 +1202,7 @@ class LineScanTab(_PlotTab):
                 note.set_visible(False)
                 self.canvas.draw_idle()
             return
-        _, ax, sc, colour = best
+        _, ax, sc, color = best
         vec = sc["start_position_vector"]
         others = [o for o in ("x", "y", "z") if o != sc["axis"]]
         text = (f"scan {sc['id']}  {sc['timestamp'].strftime('%H:%M:%S')}\n"
@@ -1218,7 +1218,7 @@ class LineScanTab(_PlotTab):
             self._hover_note = note
         note.xy = (event.xdata, event.ydata)
         note.set_text(text)
-        note.get_bbox_patch().set_edgecolor(colour)
+        note.get_bbox_patch().set_edgecolor(color)
         # keep the box inside the plot: flip it left of the mouse on the right half
         right_half = event.x > (ax.bbox.x0 + ax.bbox.x1) / 2
         top_half = event.y > (ax.bbox.y0 + ax.bbox.y1) / 2
@@ -1226,7 +1226,7 @@ class LineScanTab(_PlotTab):
         note.set_ha("right" if right_half else "left")
         note.set_va("top" if top_half else "bottom")
         note.set_visible(True)
-        for other in self.axes_by_name.values():  # draw the box above the neighbouring plots
+        for other in self.axes_by_name.values():  # draw the box above the neighboring plots
             other.set_zorder(1 if other is ax else 0)
         self.canvas.draw_idle()
 

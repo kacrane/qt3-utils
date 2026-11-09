@@ -75,7 +75,7 @@ class ScopePanel:
         self.worker = hub.worker("daq" if counters.is_daq_counter(cfg) else "counter")
         self.cfg = cfg
         self.scale = scale
-        self.set_status = set_status or (lambda value, colour: None)
+        self.set_status = set_status or (lambda value, color: None)
         self.counter = None
         self.running = False
         self._job_out = False

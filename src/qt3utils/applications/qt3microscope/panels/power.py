@@ -82,7 +82,7 @@ class PowerPanel:
         self.detectors = cfg.get("detectors", [])
         self.interval_ms = int(cfg.get("interval_ms", 200))
         self.samples = int(cfg.get("samples", 10))
-        self.set_status = set_status or (lambda value, colour: None)
+        self.set_status = set_status or (lambda value, color: None)
         self.running = False
         self._waiting = False
         self._closing = False

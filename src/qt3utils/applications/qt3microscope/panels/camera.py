@@ -260,8 +260,13 @@ class CameraTab:
                   wraplength=self.px(220)).pack(anchor="w")
         top = ttk.Frame(left)
         top.pack(fill="x", pady=(8, 6))
+        # Same colors as Start/Pause in the scope and scans: green Play, plain Pause.
+        probe = tk.Button(top)
+        self._plain_bg = probe.cget("bg"), probe.cget("fg")
+        probe.destroy()
         self.play_btn = tk.Button(top, text="▶  Play", width=10, font=("TkDefaultFont", 11, "bold"),
-                                  bg=C.play_bg, command=self.toggle_play)
+                                  command=self.toggle_play)
+        self._play_look(False)
         self.play_btn.pack(side="left")
         tk.Button(top, text="Snapshot", font=("TkDefaultFont", 10), command=self.snapshot).pack(
             side="left", padx=(6, 0), fill="y")
@@ -316,10 +321,12 @@ class CameraTab:
         c.pack(fill="x", pady=4)
         ttk.Checkbutton(c, text="Auto", variable=self.v_auto, command=self._view_changed).grid(
             row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(c, text="Black").grid(row=1, column=0, sticky="w")
+        self.lo_label = ttk.Label(c, text="Black")
+        self.lo_label.grid(row=1, column=0, sticky="w")
         self.lo_entry = ttk.Entry(c, textvariable=self.v_lo, width=9)
         self.lo_entry.grid(row=1, column=1, padx=4, pady=2)
-        ttk.Label(c, text="White").grid(row=2, column=0, sticky="w")
+        self.hi_label = ttk.Label(c, text="White")
+        self.hi_label.grid(row=2, column=0, sticky="w")
         self.hi_entry = ttk.Entry(c, textvariable=self.v_hi, width=9)
         self.hi_entry.grid(row=2, column=1, padx=4, pady=2)
         for w in (self.lo_entry, self.hi_entry):
@@ -407,6 +414,14 @@ class CameraTab:
             self.v_msg.set("Opening the camera…" if not self.info else "Starting…")
             self.play_btn.config(state="disabled")
             self.stream.send("play")
+
+    def _play_look(self, playing):
+        """Green with white text for Play (like Start elsewhere), a plain button for Pause."""
+        if playing:
+            bg, fg = self._plain_bg
+            self.play_btn.config(bg=bg, fg=fg, activebackground=bg, activeforeground=fg)
+        else:
+            self.play_btn.config(bg=C.go, fg="white", activebackground=C.go, activeforeground="white")
 
     def set_visible(self, visible):
         """Called when the Camera tab is shown or hidden: leaving it pauses the camera."""
@@ -585,9 +600,12 @@ class CameraTab:
         self._save_state()
 
     def _contrast_entries(self):
-        state = "disabled" if self.v_auto.get() else "normal"
-        self.lo_entry.config(state=state)
-        self.hi_entry.config(state=state)
+        # Black and White are hidden in Auto (Kendall): they only matter when fixed.
+        for w in (self.lo_label, self.lo_entry, self.hi_label, self.hi_entry):
+            if self.v_auto.get():
+                w.grid_remove()
+            else:
+                w.grid()
 
     def release(self):
         self.want_play = False
@@ -631,8 +649,8 @@ class CameraTab:
                 elif kind == "playing":
                     self.playing = val
                     self.play_btn.config(state="normal",
-                                         text="⏸  Pause" if val else "▶  Play",
-                                         bg=C.pause_bg if val else C.play_bg)
+                                         text="⏸  Pause" if val else "▶  Play")
+                    self._play_look(val)
                     if val:
                         self.v_msg.set("Live.")
                         self.set_status("live", GREEN)
@@ -654,7 +672,8 @@ class CameraTab:
                 elif kind == "released":
                     self.playing = False
                     self.info = {}
-                    self.play_btn.config(state="normal", text="▶  Play", bg=C.play_bg)
+                    self.play_btn.config(state="normal", text="▶  Play")
+                    self._play_look(False)
                     self.v_msg.set("Camera released. Play opens it again.")
                     self.set_status("off", GRAY)
                 elif kind == "error":

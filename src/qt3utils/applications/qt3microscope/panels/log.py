@@ -32,12 +32,17 @@ class LogPanel:
 
         bar = ttk.Frame(body)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Clear", command=self.clear).pack(side="left")
-        ttk.Button(bar, text="Copy all", command=self.copy_all).pack(side="left", padx=4)
-        ttk.Button(bar, text="Open log file", command=self.open_file).pack(side="left")
+        # Buttons on the right, away from the section header where people
+        # click to fold it (Kendall), so Clear isn't hit by accident.
+        btns = ttk.Frame(bar)
+        btns.pack(side="right")
+        ttk.Button(btns, text="Clear", command=self.clear).pack(side="left")
+        ttk.Button(btns, text="Copy all", command=self.copy_all).pack(side="left", padx=4)
+        ttk.Button(btns, text="Open log file", command=self.open_file).pack(side="left")
         self.follow = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bar, text="Follow newest", variable=self.follow).pack(side="left", padx=8)
-        ttk.Label(bar, text=f"Also saved to {console.CONSOLE_LOG}", foreground=GRAY).pack(side="right")
+        ttk.Checkbutton(btns, text="Follow newest", variable=self.follow).pack(side="left", padx=8)
+        # Packed after the buttons so a long path is cut off rather than the buttons.
+        ttk.Label(bar, text=f"Also saved to {console.CONSOLE_LOG}", foreground=GRAY).pack(side="left")
 
         box = ttk.Frame(body)
         box.pack(fill="both", expand=True, pady=(4, 0))
@@ -56,7 +61,7 @@ class LogPanel:
         body.after(POLL_MS, self._poll)
 
     def _kind(self, line):
-        """Returns (tag, counts): the colour tag for the line, and whether it
+        """Returns (tag, counts): the color tag for the line, and whether it
         starts a new error or warning for the header count."""
         if line.startswith("Exception in "):  # "Exception in Tkinter callback", then a traceback
             return "error", False
@@ -105,9 +110,9 @@ class LogPanel:
         if self.warnings:
             parts.append(f"{self.warnings} warning{'s' if self.warnings != 1 else ''}")
         text = ", ".join(parts) if parts else "no errors"
-        colour = RED if self.errors else (ORANGE if self.warnings else GRAY)
+        color = RED if self.errors else (ORANGE if self.warnings else GRAY)
         self.section.set_summary(text)
-        self.section.summary.configure(fg=colour)
+        self.section.summary.configure(fg=color)
 
     def clear(self):
         console.clear()

@@ -3,7 +3,7 @@ XY micrometers box (TQLM): the MCL MicroDrive stage, formerly qt3move's
 microstage controls, always on screen beside the scope.
 
 Lock: one click toggles it. While locked, Set, the step arrows, arrow keys,
-Home and Center are greyed out, and every move is refused where the stage is
+Home and Center are grayed out, and every move is refused where the stage is
 driven (move()), not only in the buttons, with "Microstage locked" in the
 log. The readout keeps updating.
 

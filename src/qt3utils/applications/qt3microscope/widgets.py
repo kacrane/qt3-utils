@@ -18,11 +18,11 @@ HEADER_BG = "#c9c9c9"
 
 
 class StatusChip(tk.Frame):
-    """One item in the status strip: a coloured dot, a label and a value."""
+    """One item in the status strip: a colored dot, a label and a value."""
 
     def __init__(self, parent, label):
         super().__init__(parent, bd=1, relief="groove", padx=6, pady=2)
-        # The dot is drawn, so it can be split in two colours (e.g. laser
+        # The dot is drawn, so it can be split in two colors (e.g. laser
         # state unknown, last known ON: half yellow, half green).
         size = int(round(11 * max(1.0, self.winfo_fpixels("1i") / 96.0)))
         self.dot = tk.Canvas(self, width=size, height=size, highlightthickness=0, bd=0, bg=self.cget("bg"))
@@ -33,19 +33,19 @@ class StatusChip(tk.Frame):
         self.value.pack(side="left", padx=(4, 0))
         self._draw(GRAY)
 
-    def _draw(self, colour, colour2=None):
+    def _draw(self, color, color2=None):
         d, m = self._size, 1
         self.dot.delete("all")
-        if colour2 is None:
-            self.dot.create_oval(m, m, d - m, d - m, fill=colour, outline="")
+        if color2 is None:
+            self.dot.create_oval(m, m, d - m, d - m, fill=color, outline="")
         else:  # split along the diagonal, like the laser banner's stripes
-            self.dot.create_arc(m, m, d - m, d - m, start=45, extent=180, fill=colour, outline="", style="pieslice")
-            self.dot.create_arc(m, m, d - m, d - m, start=225, extent=180, fill=colour2, outline="", style="pieslice")
+            self.dot.create_arc(m, m, d - m, d - m, start=45, extent=180, fill=color, outline="", style="pieslice")
+            self.dot.create_arc(m, m, d - m, d - m, start=225, extent=180, fill=color2, outline="", style="pieslice")
 
-    def set(self, value, colour=GRAY, colour2=None):
-        """colour2: a second colour for the other half of the dot."""
+    def set(self, value, color=GRAY, color2=None):
+        """color2: a second color for the other half of the dot."""
         self.value.config(text=value)
-        self._draw(colour, colour2)
+        self._draw(color, color2)
 
 
 class CollapsibleSection(tk.Frame):
@@ -170,7 +170,7 @@ class XYMicrometerBox(ttk.Frame):
     Always-visible XY micrometer readout with a Lock button (TQLM).
 
     Step 1 is layout only: the readout shows a dash and nothing moves. The
-    lock already greys out every move control so its look can be checked.
+    lock already grays out every move control so its look can be checked.
     """
 
     def __init__(self, parent, start_locked=True):

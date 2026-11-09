@@ -3,7 +3,7 @@ Preferences for QT3 Microscope (File > Preferences...).
 
 Settings, kept in ~/.qt3utils/qt3microscope_prefs.json:
 
-    dark     Light or dark colours (theme.py).
+    dark     Light or dark colors (theme.py).
     profile  Which setup profile to load: "shortcut" (whatever the desktop
              shortcut or command line says, the default), "VQLM", "TQLM",
              or the path of another profile YAML file.
@@ -12,9 +12,12 @@ Settings, kept in ~/.qt3utils/qt3microscope_prefs.json:
              opened or a scan or the scope starts (the profile's
              flippers: auto: section says which mirrors). The excitation
              mirror is left alone. Off by default.
+    verbose_log  Verbose logging for diagnosing problems: every qt3utils
+             message down to DEBUG goes to the Log section and
+             qt3microscope.log. Off by default.
 
 The theme and profile take effect when the program starts, so the dialog
-offers to restart; auto_mirrors takes effect at once.
+offers to restart; auto_mirrors and verbose_log take effect at once.
 A --config path given on the command line still wins over the preference.
 """
 
@@ -26,7 +29,7 @@ from tkinter import filedialog, ttk
 from qt3utils.applications.qt3microscope.theme import C
 
 PREFS_PATH = os.path.join(os.path.expanduser("~"), ".qt3utils", "qt3microscope_prefs.json")
-DEFAULTS = {"dark": False, "profile": "shortcut", "auto_mirrors": False}
+DEFAULTS = {"dark": False, "profile": "shortcut", "auto_mirrors": False, "verbose_log": False}
 
 
 def load():
@@ -40,6 +43,7 @@ def load():
         pass
     prefs["dark"] = bool(prefs["dark"])
     prefs["auto_mirrors"] = bool(prefs["auto_mirrors"])
+    prefs["verbose_log"] = bool(prefs["verbose_log"])
     if not isinstance(prefs["profile"], str) or not prefs["profile"].strip():
         prefs["profile"] = "shortcut"
     return prefs
@@ -95,6 +99,14 @@ class PreferencesDialog:
                   "(flippers: auto: in the profile).", foreground=C.muted, wraplength=px(420),
                   justify="left").pack(anchor="w", padx=(px(20), 0))
 
+        diag = ttk.LabelFrame(body, text="Log", padding=px(8))
+        diag.pack(fill="x", pady=(px(10), 0))
+        self.verbose_log = tk.BooleanVar(value=prefs.get("verbose_log", False))
+        ttk.Checkbutton(diag, text="Verbose logging", variable=self.verbose_log).pack(anchor="w")
+        ttk.Label(diag, text="Writes every detail to the Log, for diagnosing problems. "
+                  "Leave off for everyday use.", foreground=C.muted, wraplength=px(420),
+                  justify="left").pack(anchor="w", padx=(px(20), 0))
+
         prof = ttk.LabelFrame(body, text="Setup profile", padding=px(8))
         prof.pack(fill="x", pady=(px(10), 0))
         choice = prefs["profile"]
@@ -122,7 +134,7 @@ class PreferencesDialog:
                       foreground=C.orange, wraplength=px(420), justify="left").pack(anchor="w")
 
         self.msg = ttk.Label(body, text="Appearance and profile take effect when QT3 Microscope restarts; "
-                                        "the mirror setting takes effect at once.",
+                                        "the mirror and log settings take effect at once.",
                              foreground=C.muted, wraplength=px(420), justify="left")
         self.msg.pack(anchor="w", pady=(px(10), 0))
 
@@ -165,7 +177,8 @@ class PreferencesDialog:
                 self.msg.configure(text="Choose a profile file that exists.", foreground=C.red)
                 return
             choice = os.path.abspath(path)
-        prefs = {"dark": bool(self.dark.get()), "profile": choice, "auto_mirrors": bool(self.auto_mirrors.get())}
+        prefs = {"dark": bool(self.dark.get()), "profile": choice, "auto_mirrors": bool(self.auto_mirrors.get()),
+                 "verbose_log": bool(self.verbose_log.get())}
         try:
             save(prefs)
         except OSError as e:

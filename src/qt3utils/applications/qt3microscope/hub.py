@@ -14,6 +14,21 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# With verbose logging on (File > Preferences), every job is logged at DEBUG
+# with how long it took, except these frequent ones, which are logged only
+# when they take longer than SLOW_S.
+REPEATING = {"scope read", "power read", "ping"}
+SLOW_S = 1.0
+
+
+def _short(value, limit=80):
+    """A short text of a job's result for the verbose log."""
+    try:
+        text = repr(value)
+    except Exception:
+        text = type(value).__name__
+    return text if len(text) <= limit else text[:limit] + "..."
+
 
 class DeviceWorker:
     """Runs jobs for one device, one at a time, on its own thread."""
@@ -40,8 +55,13 @@ class DeviceWorker:
     def _loop(self):
         while True:
             job, fn, on_done, quiet = self._jobs.get()
+            t0 = time.perf_counter()
             try:
                 result = fn()
+                if logger.isEnabledFor(logging.DEBUG):
+                    dt = time.perf_counter() - t0
+                    if job not in REPEATING or dt > SLOW_S:
+                        logger.debug("%s: %s took %.3f s -> %s", self.name, job, dt, _short(result))
                 self._results.put((on_done, True, result))
             except Exception as e:  # report every failure back to the panel
                 logger.warning("%s: %s failed: %r", self.name, job, e, exc_info=not quiet)
