@@ -82,7 +82,8 @@ QT3MICROSCOPE:
     # Image scan and XYZ Optimization tabs (formerly qdlscan / qt3scan).
     scan:
       inter_scan_settle_time: 0.01
-      image: {range: 80, pixels: 80, time: 1}
+      # mode: raster or snake; as TQLM qt3scan (faster with the SNSPD). Use raster if edges shift row to row, as they did on VQLM.
+      image: {range: 80, pixels: 80, time: 1, mode: snake}
       line: {range_xy: 3, range_z: 20, pixels: 50, time: 1}
     # Flip mirrors (same values as the TQLM qt3mirror_base.yaml).
     flippers:

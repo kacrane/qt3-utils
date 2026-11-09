@@ -96,7 +96,8 @@ QT3MICROSCOPE:
     # (image) or s/line (line scan).
     scan:
       inter_scan_settle_time: 0.01
-      image: {range: 80, pixels: 80, time: 1}
+      # mode: raster or snake; as VQLM qdlscan: every row left to right, then a ramp back. Snake rows shifted edges row to row (Kendall, 2026-11-09).
+      image: {range: 80, pixels: 80, time: 1, mode: raster}
       line: {range_xy: 3, range_z: 20, pixels: 50, time: 1}
     # Flip mirrors (same layout as the VQLM qt3mirror_base.yaml).
     flippers:

@@ -630,6 +630,7 @@ class ImageScanTab(_PlotTab):
                 "min_position_1": mn1, "max_position_1": mx1, "min_position_2": mn2, "max_position_2": mx2,
                 "data_x": np.linspace(mn1, mx1, n), "data_y": np.linspace(mn2, mx2, n),
                 "data_z": np.full((n, n), np.nan), "index": 0, "return_to": before,
+                "mode": self.cfg.get("mode", "raster"),
                 "title": f"Image {sid}  {ts.strftime('%H:%M:%S')}  {rng:g} µm, {n} px, {t:g} s/row"}
         if not self.pin_manual and self.shown is not None:
             self.pinned = self.shown  # nothing pinned by hand: the previous scan moves over
@@ -690,12 +691,22 @@ class ImageScanTab(_PlotTab):
         c._set_axis(axis_controller=ax2, position=float(scan["data_y"][index]))
         time.sleep(c.inter_scan_settle_time)
         n = scan["n_pixels"]
-        if index % 2 == 0:  # snake scan, as qdlscan
-            row = c._scan_axis(axis_controller=ax1, start=scan["min_position_1"], stop=scan["max_position_1"],
-                               n_pixels=n, scan_time=scan["time"])
+        lo, hi = scan["min_position_1"], scan["max_position_1"]
+        if scan.get("mode", "raster") == "snake" and index % 2 == 1:
+            # Snake (TQLM qt3scan): odd rows run backwards. Faster, but the piezo
+            # lags the other way on these rows, so edges shift row to row.
+            row = c._scan_axis(axis_controller=ax1, start=hi, stop=lo, n_pixels=n, scan_time=scan["time"])[::-1]
         else:
-            row = c._scan_axis(axis_controller=ax1, start=scan["max_position_1"], stop=scan["min_position_1"],
-                               n_pixels=n, scan_time=scan["time"])[::-1]
+            row = c._scan_axis(axis_controller=ax1, start=lo, stop=hi, n_pixels=n, scan_time=scan["time"])
+            if scan.get("mode", "raster") != "snake":
+                # Raster (VQLM qdlscan): every row runs the same way, then the
+                # piezo ramps back over inter_scan_settle_time, as qdlscan does,
+                # rather than jumping.
+                settle = float(c.inter_scan_settle_time)
+                for pos in np.linspace(hi, lo, n):
+                    c._set_axis(axis_controller=ax1, position=float(pos))
+                    if settle > 0:
+                        time.sleep(settle / n)
         return row / scan["time_per_pixel"]
 
     def _row_or_fail(self, ok, result):
@@ -928,6 +939,9 @@ class ImageScanTab(_PlotTab):
                                ("max_position_1", um), ("max_position_2", um)):
                 ds = df.create_dataset(f"scan_settings/{key}", data=s[key])
                 ds.attrs["units"] = units
+            ds = df.create_dataset("scan_settings/scan_mode", data=s.get("mode", "raster"))
+            ds.attrs["units"] = "None"
+            ds.attrs["description"] = "raster: every row the same way; snake: odd rows backwards."
             for key, data, units in (("positions_axis_1", s["data_x"], um), ("positions_axis_2", s["data_y"], um),
                                      ("count_rates", s["data_z"], "Counts per second"),
                                      ("counts", s["data_z"] * s["time_per_pixel"], "Counts")):
