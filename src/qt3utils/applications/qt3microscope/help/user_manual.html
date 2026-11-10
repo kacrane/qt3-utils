@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QT3 Microscope User Manual</title>
+<!-- Copy of the QT3 Microscope user guide (Claude Doc), opened by Help > User Manual.
+     Regenerate it from the doc whenever the guide changes. -->
+<style>
+  :root { --bg: #ffffff; --text: #1d1d1f; --muted: #5f6368; --border: #d0d4da; --head: #f2f4f7; --code: #f2f4f7; --link: #1a5fb4; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1e1f22; --text: #e3e3e3; --muted: #a0a4ab; --border: #3c3f44; --head: #2a2c30; --code: #2a2c30; --link: #7cb0ff; }
+  }
+  body { background: var(--bg); color: var(--text); font: 15px/1.55 "Segoe UI", system-ui, sans-serif; margin: 0; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 20px 64px; }
+  h1 { font-size: 1.8em; margin: 0 0 4px; }
+  h2 { font-size: 1.3em; margin-top: 2em; padding-top: .4em; border-top: 1px solid var(--border); }
+  a { color: var(--link); }
+  code { background: var(--code); padding: 1px 4px; border-radius: 3px; font: 0.92em Consolas, monospace; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--head); }
+  .note { color: var(--muted); font-size: .92em; }
+  nav { background: var(--head); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; margin: 16px 0; }
+  nav ul { margin: 4px 0; padding-left: 20px; columns: 2; }
+</style>
+</head>
+<body>
+<main>
+<h1>QT3 Microscope User Manual (VQLM)</h1>
+
+<nav><strong>Contents</strong>
+<ul>
+<li><a href="#starting-the-program">Starting the program</a></li>
+<li><a href="#the-window-at-a-glance">The window at a glance</a></li>
+<li><a href="#instrument-drawer">Instrument drawer</a></li>
+<li><a href="#scope">Scope (SPCM count rate)</a></li>
+<li><a href="#camera-tab">Camera tab</a></li>
+<li><a href="#image-scan-tab">Image scan tab</a></li>
+<li><a href="#xyz-optimization-tab">XYZ Optimization tab</a></li>
+<li><a href="#log-and-saved-window-state">Log and saved window state</a></li>
+<li><a href="#preferences">Preferences and dark mode</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+<li><a href="#files-and-settings">Files and settings</a></li>
+</ul>
+</nav>
+
+<p>QT3 Microscope runs the whole confocal setup in one window: laser, flip mirrors, power, piezo stage, camera, photon-counter scope, image scans and XYZ optimization. This guide is for everyday use on the VQLM; the TQLM is being ported. Installing, updating, setup profiles, the files the program keeps and how the code works are in the <a href="https://claude.ai/artifact/837CpwfRaMKuEcMNX9nzc3">QT3 Microscope developer and expert guide</a>.</p>
+
+<h2 id="starting-the-program">Starting the program</h2>
+<p>Double-click <strong>QT3 Microscope</strong> on the desktop (it is also in the Start menu and taskbar). No terminal window opens; anything that used to appear there goes to the Log section at the bottom of the window. The taskbar button shows the QT3 logo and can be pinned.</p>
+<p>At launch the program:</p>
+<ol>
+<li>Loads the VQLM setup profile (<code>config_files/VQLM.yaml</code>), which decides which instruments and tabs appear.</li>
+<li>Connects the flip mirrors and puts each one back where it was when the program last closed.</li>
+<li>Connects to the QICK-DAWG board for the laser. It does not turn the laser on or off.</li>
+<li>Restores the window size and, if you closed it less than 2 hours ago, which sections were folded, which were popped out and which tab was open.</li>
+</ol>
+<p>At launch the piezos move: back to where they were when the program last closed, if that was less than 2 hours ago, otherwise to 0, 0, 0. The Stage section's <strong>Go to last</strong> button, with the last position and when it was saved beside it, moves them back to that last position at any time.</p>
+<p>To make the shortcut on a new PC, or to start from a terminal to see an error, see Installing and updating in the <a href="https://claude.ai/artifact/837CpwfRaMKuEcMNX9nzc3">developer guide</a>.</p>
+
+<h2 id="the-window-at-a-glance">The window at a glance</h2>
+<p>Measurements sit in the middle, the scope and log along the bottom, and the instruments in a drawer on the right.</p>
+<table>
+<thead><tr><th>Where</th><th>What it holds</th></tr></thead>
+<tbody>
+<tr><td>Top strip</td><td>Status chips: Laser, P obj (power at objective), Scope - SPCM (count rate), Piezo X/Y/Z, Flippers. The dot is green when fine, orange or red when something needs attention.</td></tr>
+<tr><td>Middle</td><td>Tabs: <strong>Camera</strong>, <strong>Image scan</strong> and <strong>XYZ Optimization</strong>.</td></tr>
+<tr><td>Bottom</td><td><strong>Scope</strong> (live SPCM count rate), then <strong>Log</strong> (folded by default).</td></tr>
+<tr><td>Right</td><td>Instrument drawer: Laser, Flip mirrors, Power at objective, Stage (piezos).</td></tr>
+<tr><td>Footer</td><td>Setup profile in use, the theme, and the path of the program log.</td></tr>
+</tbody>
+</table>
+<p>Drag the divider between the middle and the drawer to change the drawer's width. <strong>View &gt; Show instrument drawer</strong> hides it completely; <strong>View &gt; Drawer sections</strong> chooses which sections it lists. <strong>Help &gt; User Manual</strong> opens this manual.</p>
+
+<h2 id="instrument-drawer">Instrument drawer</h2>
+<p>Click a section's header to fold or open it; a folded header still shows a one-line summary. <strong>Open all</strong> and <strong>Fold all</strong> at the top of the drawer do every section at once.</p>
+<p><strong>Pop-out.</strong> The ↗ button at the right of a header moves that section into its own window, which you can move to another part of the screen. The panel keeps running; nothing reconnects. The drawer keeps a line with <strong>Show</strong> (bring the window to the front) and <strong>Bring back</strong>. Closing the window, its <strong>↙ Back to drawer</strong> button, or <strong>View &gt; Bring all windows back to the drawer</strong> returns it.</p>
+<p><strong>Laser (QICK-DAWG).</strong> <strong>Laser ON</strong> and <strong>Laser OFF</strong> switch the excitation laser. The large label shows ON (green) or OFF (gray); the header has small ON/OFF buttons that work while folded. The connection is checked every 30 s; use <strong>Reconnect</strong> if it drops. When the program cannot tell whether the laser is on, the label reads <strong>Laser: unknown, ON last</strong> or <strong>Laser: unknown, OFF last</strong>, with diagonal yellow stripes mixed with green (last ON) or gray (last OFF), and the Laser chip's dot is split the same way. "Last" is the last state this program set or read, even from an earlier session; plain yellow "unknown" means it has never known.</p>
+<p><strong>Flip mirrors.</strong> Mirrors M5–M8 on the DAQ's PFI2–PFI5 lines, each shown UP (green) or DOWN (gray) with a <strong>Toggle</strong> button. <strong>All up</strong> and <strong>All down</strong> move every mirror. The preset buttons (for example "532nm - SPCM - Confocal") set the mirrors for a light path; the button of the preset that matches the mirrors right now is highlighted. <strong>Initialize (sync UP)</strong> drives every line UP to resynchronize if a mirror was moved by hand. <strong>Connect</strong> / <strong>Disconnect</strong> are only needed after a DAQ problem; the panel connects by itself at launch.</p>
+<p><strong>Automatic flip mirrors</strong> (off by default; turn on in File &gt; Preferences with <strong>Switch the mirrors automatically</strong>). When on, opening the Camera tab moves the mirrors to the camera. Opening Image scan or XYZ Optimization, or starting any scan or the scope, moves them to the photon counter, and a scan waits for the mirrors to settle before it starts. Only the detection mirrors move (listed under <code>flippers: auto:</code> in the profile), so the 532 nm / SuperK or Santec / white light choice stays as it is. The mirrors don't move at launch, and they stay on the counter if you open the Camera tab while a scan is running.</p>
+<p><strong>Power at objective.</strong> <strong>Start</strong> reads the PDA100A2 photodiode continuously and shows the power at the objective in mW, with the photodiode voltage beside it. <strong>Stop</strong> ends the readings and frees the DAQ. Double-click a reading to enlarge it for reading across the room; double-click again to shrink it.</p>
+<p><strong>Stage (piezos).</strong> Type a position in µm in an axis's box and press <strong>Set</strong>; <strong>Current</strong> shows where the piezo is. To step with the keyboard, tick <strong>Arrow-key stepping</strong>: ←/→ move X, ↑/↓ move Y and +/− move Z by each axis's Step (default 0.1 µm). Keys only act while the Stage section is open and you are not typing in a box. Stage moves are refused while a scan is running.</p>
+
+<h2 id="scope">Scope (SPCM count rate)</h2>
+<p>The scope plots the SPCM count rate over time, with the latest value in large blue text.</p>
+<ul>
+<li><strong>Start</strong> begins reading; <strong>Pause</strong> stops it and keeps the trace; <strong>Reset</strong> clears the trace. The header's Start/Pause buttons work while the scope is folded.</li>
+<li><strong>Time per sample (s)</strong> sets how long each point counts (default 0.01 s).</li>
+<li><strong>Raw counts</strong> shows counts per sample instead of counts per second.</li>
+<li><strong>Save</strong> writes the trace. Choose PNG to get the picture plus an HDF5 file of the data with the same name, or HDF5 for the data only. The default name is <code>scope_YYYYMMDD_HHMMSS</code>.</li>
+</ul>
+<p>The scans share the photon counter with the scope: a scan pauses the scope while it runs and restarts it afterwards if it was running.</p>
+<p><strong>Size and pop-out.</strong> Drag the bar just above the scope up or down to make the plot taller or shorter; the height is remembered. The ↗ button in the scope's header moves it into its own window, which is handy beside the XYZ Optimization tab or on another screen; <strong>↙ Back to main window</strong> (or closing that window) puts it back. The Scope - SPCM chip in the top strip shows the latest rate.</p>
+<p><strong>"Is the SPCM on?" warning.</strong> If the first reading of the scope, a scan row or an optimization scan is exactly 0 counts, a warning window opens and the Log says so. Check that the SPCM is switched on and plugged in. The window closes by itself as soon as counts come in, or you can close it.</p>
+
+<h2 id="camera-tab">Camera tab</h2>
+<p>The Camera tab shows live video from the microscope camera (a Thorlabs CS165MU on the VQLM). The camera is opened the first time you press Play, not at launch.</p>
+<ul>
+<li><strong>▶ Play</strong> starts live view and <strong>⏸ Pause</strong> freezes the last frame, which can still be zoomed, measured against the crosshair or saved. Leaving the tab pauses live view; press Play again when you come back.</li>
+<li><strong>Exposure (ms)</strong> and <strong>Gain (dB)</strong>: type a value, drag the slider, or turn the mouse wheel over either (hold Shift for finer steps). <strong>Auto exposure</strong> keeps the brightest pixels near 60% of full scale.</li>
+<li><strong>Contrast</strong>: <strong>Auto</strong> stretches each frame. Untick it to show the <strong>Black</strong> and <strong>White</strong> levels, which start at the last auto values, and type your own. <strong>Saturated pixels in red</strong> marks pixels at full scale.</li>
+<li><strong>View</strong>: the mouse wheel zooms, dragging pans, and <strong>Fit</strong>, <strong>1:1</strong> and <strong>2×</strong> set the zoom. <strong>Crosshair</strong> and <strong>Reticle</strong> (a circle with an adjustable <strong>diameter (px)</strong>) can be shown together; Shift+click or right-click on the image moves them, and <strong>Center</strong> puts them back in the middle.</li>
+<li><strong>Snapshot</strong> saves three files: a PNG as shown on screen, the raw camera counts as a 16-bit <code>_raw.tif</code>, and a <code>.json</code> with exposure, gain and piezo position. They go to <code>M:\qt3microscope_camera</code> unless you pick another folder with <strong>Folder…</strong>.</li>
+<li><strong>Release</strong> lets ThorCam open the camera while QT3 Microscope stays open. Press Play to take it back.</li>
+</ul>
+<p>With automatic flip mirrors turned on in Preferences, opening this tab moves the mirrors to the camera.</p>
+
+<h2 id="image-scan-tab">Image scan tab</h2>
+<p>An image scan is a 2D confocal map in X and Y at the current Z, centered on the reference position. The reference position is the X/Y the piezos were last set to outside a scan (by Set, Go to position, an optimization or launch). During a scan the piezos sweep away from it, but it stays fixed, and they return to it when the scan ends. The text under the settings shows it, and <strong>Optimize Position</strong> jumps to the XYZ Optimization tab.</p>
+<p><strong>Settings.</strong> <strong>Range (µm)</strong> is the width of the square (default 80), <strong>Number of pixels</strong> is per side (default 80), and <strong>Time per row (s)</strong> is how long each line takes (default 1).</p>
+<p><strong>Running a scan.</strong></p>
+<ol>
+<li>Press <strong>Start scan</strong>. The newest scan fills the left image; a green line marks the row being scanned and a blue circle marks the reference position.</li>
+<li><strong>Pause</strong> stops after the current row, and the button turns into <strong>Continue</strong>. While paused, the stage and scope are free to use.</li>
+<li><strong>Cancel</strong> ends the scan early, running or paused. The partial image is kept, marked "(canceled)".</li>
+<li>To give up on a paused scan and start a fresh one, double-click <strong>Start scan</strong>. This is the same as Cancel then Start. A single click while paused only shows a reminder.</li>
+</ol>
+<p>When a scan completes or is canceled, the piezos go back to the reference position. Image scans are numbered 001, 002, …</p>
+<p><strong>Pinned scan (right image).</strong> The right image holds a scan to compare against. <strong>Pin →</strong> pins the scan shown on the left; the <strong>Pinned</strong> list picks any earlier scan; <strong>Unpin</strong> clears it. If you have not pinned anything by hand, the previous scan moves to the pinned side automatically when a new scan starts. A scan you pinned by hand stays until you change it.</p>
+<p><strong>Orange box.</strong> On the pinned image, an orange rectangle outlines the area of the scan on the left. It is solid when the two scans were taken at the same Z and fades as their Z values differ, fully faint at 5 µm apart. Each image's title gives its Z.</p>
+<p><strong>Gallery.</strong> The column on the right lists every scan as a thumbnail, newest on top; scroll it with the mouse wheel. Click a thumbnail to show it on the left, press its <strong>Pin</strong> to pin it, or <strong>×</strong> to remove it from the list (not possible for a running or paused scan). A blue border marks the scan on the left and an orange border the pinned one.</p>
+<p><strong>Brightness.</strong> Under Image settings, type <strong>Minimum</strong> and <strong>Maximum</strong> in counts/s and press <strong>Normalize</strong>; <strong>Auto</strong> goes back to scaling each image to its own data. The thumbnails follow the same scale.</p>
+<p><strong>Moving to a spot.</strong> Right-click a point on either image and choose <strong>Go to position</strong> to move the piezos there.</p>
+<p><strong>Saving.</strong> <strong>Save scan</strong> saves the left scan and <strong>Save pinned</strong> the right one. Choose PNG to get the picture plus an HDF5 file with the same name, or HDF5 for the data only. The HDF5 layout matches qdlscan's, so existing analysis scripts read it.</p>
+<p>The disk button under the plots offers two choices: <strong>Save scan … on its own as PNG</strong> (the picture only) or <strong>Save both plots side by side as PNG</strong>. Saved pictures are always black on white.</p>
+
+<h2 id="xyz-optimization-tab">XYZ Optimization tab</h2>
+<p>Each Optimize button scans one axis through the current position, fits a Gaussian and moves the piezo to the fitted peak. If the fit fails, the piezo goes back to where it started, and the status line says so.</p>
+<p><strong>Settings.</strong> <strong>Range XY (µm)</strong> is the scan width for X and Y (default 3), <strong>Range Z (µm)</strong> for Z (default 20), <strong>Number of pixels</strong> per scan (default 50), and <strong>Time (s)</strong> for the whole scan (default 1).</p>
+<p><strong>Typical use.</strong> After finding a spot in an image scan, move to it (right-click &gt; Go to position), then press <strong>Optimize X</strong>, <strong>Optimize Y</strong> and <strong>Optimize Z</strong>. Repeat until the peaks stop moving.</p>
+<p><strong>Reading the plots.</strong></p>
+<ul>
+<li>The X, Y and Z plots sit side by side, and each Optimize click adds its scan to its own axis's plot.</li>
+<li>Successive scans cycle through colors. The newest scan has the heavy line, with a dashed vertical line where the piezo moved to; older scans are thinner and paler.</li>
+<li>All three plots share one intensity scale, so you can read across them to compare peak heights.</li>
+<li>The position axis widens to fit every scan so far.</li>
+<li>Each plot's title gives the other two piezo positions for its newest scan. Hover over a line to see that scan's number, time, the other two positions and where it moved the piezo.</li>
+<li>Right-click in a plot and choose <strong>Go to position</strong> to move that axis there.</li>
+</ul>
+<p><strong>Reset plots</strong> clears all three plots. <strong>Save scan</strong> saves the scan picked in the <strong>Scan</strong> list, as PNG plus HDF5 or HDF5 only.</p>
+
+<h2 id="log-and-saved-window-state">Log and saved window state</h2>
+<p><strong>Log.</strong> The Log section under the scope shows everything that used to go to the terminal: messages, warnings and full error tracebacks. It starts folded. Its header counts errors (red) and warnings (orange), so a problem shows even while folded. <strong>Clear</strong> empties it, <strong>Copy all</strong> copies it for pasting into a message, <strong>Open log file</strong> opens the saved copy, and <strong>Follow newest</strong> keeps the newest line in view.</p>
+<p><strong>What is remembered between sessions.</strong></p>
+<table>
+<thead><tr><th>Remembered</th><th>When it comes back</th></tr></thead>
+<tbody>
+<tr><td>Window size, maximized or not, drawer width, scope height</td><td>Always</td></tr>
+<tr><td>Which drawer sections are shown (View &gt; Drawer sections)</td><td>Always</td></tr>
+<tr><td>Preferences (light or dark, profile, automatic mirrors, verbose logging)</td><td>Always</td></tr>
+<tr><td>Flip mirror positions</td><td>Always (restored at connect)</td></tr>
+<tr><td>Last laser state (for the "unknown, ON last" banner)</td><td>Always</td></tr>
+<tr><td>Folder you last saved to</td><td>Always</td></tr>
+<tr><td>Camera settings and snapshot folder</td><td>Always</td></tr>
+<tr><td>Folded or open sections, including Scope and Log</td><td>Only if reopened within 2 hours</td></tr>
+<tr><td>Popped-out windows and where they were</td><td>Only if reopened within 2 hours</td></tr>
+<tr><td>Which tab was open</td><td>Only if reopened within 2 hours</td></tr>
+</tbody>
+</table>
+<p>After 2 hours the defaults apply: Laser, Flip mirrors and Power open, Stage folded, Scope open, Log folded. The state is saved when you quit and once a minute, so a crash loses at most a minute. Scans themselves are not kept between sessions; <strong>SAVE THE ONES YOU NEED.</strong></p>
+
+<h2 id="preferences">Preferences and dark mode</h2>
+<p><strong>File &gt; Preferences…</strong> has four settings. <strong>Appearance</strong> picks Light or Dark colors. <strong>Flip mirrors</strong> turns automatic mirror switching on or off (below). <strong>Log &gt; Verbose logging</strong> (off by default) writes every detail to the Log, including each instrument command and how long it took; turn it on to diagnose a problem, then send the Log. <strong>Setup profile</strong> picks which profile loads: <strong>From the desktop shortcut</strong> (the default), <strong>VQLM</strong>, <strong>TQLM</strong>, or <strong>Another profile file</strong> (type a path or use <strong>Browse…</strong>). The dialog shows the profile running now.</p>
+<p>Appearance and profile apply when the program starts again. <strong>Save and restart</strong> saves and restarts at once (a running scan or measurement stops, and the window state is kept); <strong>Save</strong> keeps them for the next start. <strong>File &gt; Restart</strong> restarts without changing anything.</p>
+<p>Saved PNG images stay black on white in both themes. If the profile file chosen here can't be read, the program starts with the shortcut's profile and says so in the Log.</p>
+<p><strong>Automatic flip mirrors.</strong> In Preferences, tick <strong>Switch the mirrors automatically</strong>. It takes effect as soon as you press Save. Opening the Camera tab then moves the mirrors to the camera. Opening Image scan or XYZ Optimization, or starting any scan or the scope, moves them to the photon counter, and a scan waits for the mirrors to settle before it starts. Only the detection mirrors move (listed under <code>flippers: auto:</code> in the profile), so the 532 nm / SuperK or Santec / white light choice stays as it is. The mirrors don't move at launch, and they stay on the counter if you open the Camera tab while a scan is running.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<table>
+<thead><tr><th>Problem</th><th>What to do</th></tr></thead>
+<tbody>
+<tr><td>The shortcut opens nothing</td><td>A message box should say why. If not, open <code>qt3microscope_console.log</code> (below) and send it along.</td></tr>
+<tr><td>Taskbar shows Python or Tk instead of QT3 Microscope</td><td>Run the shortcut script again, unpin any old Python/Tk button, then start from the new shortcut.</td></tr>
+<tr><td>Status line says "Busy: …"</td><td>Another job is using the DAQ, usually a scan. Wait for it, or pause or cancel the scan.</td></tr>
+<tr><td>Stage keys do nothing</td><td>Tick Arrow-key stepping, open the Stage section, and click outside any text box. Moves are refused during a scan.</td></tr>
+<tr><td>Laser shows "unknown"</td><td>Press Reconnect. If it stays unknown, check the QICK-DAWG board's USB connection. The stripes show the last known state, which may no longer be true.</td></tr>
+<tr><td>Power shows "DAQ error"</td><td>Press Start again; the Log has the details.</td></tr>
+<tr><td>Optimize says "fit failed"</td><td>The peak was not inside the range. Widen Range XY or Range Z, or increase Time.</td></tr>
+<tr><td>Log header shows errors</td><td>Open the Log, press Copy all and send it along with what you were doing.</td></tr>
+<tr><td>"Is the SPCM on?" window</td><td>The first reading was 0 counts. Switch on the SPCM and check its cable; the window closes when counts arrive.</td></tr>
+<tr><td>Camera shows nothing</td><td>Press Play. If ThorCam has the camera, close ThorCam first. Check the mirrors are on the camera preset.</td></tr>
+</tbody>
+</table>
+
+<h2 id="files-and-settings">Files and settings</h2>
+<p>If something goes wrong, the most useful file is <code>C:\Users\QT3 User Facility\.qt3utils\qt3microscope_console.log</code>, which holds everything shown in the Log (the run before is <code>qt3microscope_console.prev.log</code>). The full list of files the program keeps, and the setup profile, are in the <a href="https://claude.ai/artifact/837CpwfRaMKuEcMNX9nzc3">developer guide</a>.</p>
+</main>
+</body>
+</html>

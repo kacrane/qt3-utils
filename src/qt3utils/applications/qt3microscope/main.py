@@ -171,6 +171,10 @@ class MicroscopeWindow:
         self.sections_menu = tk.Menu(view, tearoff=0)
         view.add_cascade(label="Drawer sections", menu=self.sections_menu)
         bar.add_cascade(label="View", menu=view)
+
+        help_menu = tk.Menu(bar, tearoff=0)
+        help_menu.add_command(label="User Manual", command=self.open_user_manual)
+        bar.add_cascade(label="Help", menu=help_menu)
         self.window.config(menu=bar)
 
     def _build_status_strip(self):
@@ -724,6 +728,23 @@ class MicroscopeWindow:
         self.save_state()
         self.hub.close()
         self.window.destroy()
+
+    # ----- help ------------------------------------------------------------
+    def open_user_manual(self):
+        """Open the offline copy of the user guide (help/user_manual.html) in the web browser."""
+        import pathlib
+        import webbrowser
+        from tkinter import messagebox
+        path = os.path.join(APP_DIR, "help", "user_manual.html")
+        if not os.path.exists(path):
+            messagebox.showerror("User Manual", f"The manual file is missing:\n{path}", parent=self.window)
+            return
+        logger.info("Opening the user manual: %s", path)
+        try:
+            webbrowser.open(pathlib.Path(path).as_uri())
+        except Exception as e:
+            messagebox.showerror("User Manual", f"Could not open the manual: {e}\nOpen it by hand:\n{path}",
+                                 parent=self.window)
 
     # ----- preferences -----------------------------------------------------
     def open_preferences(self):
