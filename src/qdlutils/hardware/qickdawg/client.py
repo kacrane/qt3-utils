@@ -14,7 +14,7 @@ version must match the board's).
 Example::
 
     from qdlutils.hardware.qickdawg.client import QickDawgClient
-    client = QickDawgClient("192.168.3.1")
+    client = QickDawgClient("192.168.2.99")
     client.laser_on()
     client.laser_off()
 """
@@ -70,7 +70,7 @@ class QickDawgClient:
         (see DEFAULT_LASER_SETTINGS).
     """
 
-    def __init__(self, host="192.168.3.1", port=8888, server_name="myqick",
+    def __init__(self, host="192.168.2.99", port=8888, server_name="myqick",
                  timeout_s=10.0, laser_settings=None):
         self.host = host
         self.port = int(port)
@@ -225,10 +225,10 @@ class QickDawgClient:
 
 
 def main(argv=None):
-    """Command-line check: python -m qdlutils.hardware.qickdawg.client --host 192.168.3.1"""
+    """Command-line check: python -m qdlutils.hardware.qickdawg.client --host 192.168.2.99"""
     import argparse
     p = argparse.ArgumentParser(description="Check the QICK-DAWG connection and switch the laser.")
-    p.add_argument("--host", default="192.168.3.1")
+    p.add_argument("--host", default="192.168.2.99")
     p.add_argument("--port", type=int, default=8888)
     p.add_argument("--name", default="myqick")
     p.add_argument("--pmod", type=int, default=None, help="laser_gate_pmod (default 0)")

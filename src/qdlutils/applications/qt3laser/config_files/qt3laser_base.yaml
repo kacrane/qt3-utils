@@ -3,7 +3,7 @@
 # default_config.* lines).
 QT3LASER:
   QickDawg:
-    host: 192.168.3.1     # board IP, the address in qd.start_client('...')
+    host: 192.168.2.99     # board IP, the address in qd.start_client('...')
     port: 8888
     server_name: myqick
     timeout_s: 10         # a call that takes longer counts as a lost link

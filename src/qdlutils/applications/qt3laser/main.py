@@ -6,7 +6,7 @@ QickDawgClient, which reconnects by itself if the board reboots or the link
 drops, and checks the board every 30 s so the status light stays honest.
 
 Run:  python -m qdlutils.applications.qt3laser.main
-      python -m qdlutils.applications.qt3laser.main --host 192.168.3.1
+      python -m qdlutils.applications.qt3laser.main --host 192.168.2.99
 Settings: config_files/qt3laser_base.yaml (or --config my.yaml)
 """
 
@@ -249,7 +249,7 @@ def main(is_root_process=True, argv=None):
     args = parse_args(argv if (argv is not None or is_root_process) else [])
     conn_cfg, laser_cfg = load_config(args.config)
     client = QickDawgClient(
-        host=args.host or conn_cfg.get("host", "192.168.3.1"),
+        host=args.host or conn_cfg.get("host", "192.168.2.99"),
         port=conn_cfg.get("port", 8888),
         server_name=conn_cfg.get("server_name", "myqick"),
         timeout_s=conn_cfg.get("timeout_s", 10),
