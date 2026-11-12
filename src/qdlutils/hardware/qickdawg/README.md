@@ -22,9 +22,11 @@ Upstream runs the two board pieces from `run_server/name_server.ipynb` and
    This was reproduced with the notebook's exact settings.
 3. **Clients never reconnect.** After any network blip, a notebook's `qd.soc` proxy is dead
    and stays dead until the notebook is re-run.
-4. **The PC side of the link.** If the PC reaches the board over the USB cable
-   (192.168.3.1 is PYNQ's USB-network address), Windows can power down that USB network
-   adapter. That breaks every open connection. Turn this off in Device Manager (step 4 below).
+4. **The PC side of the link.** The board used to be reached over its USB cable
+   (192.168.3.1 is PYNQ's USB-network address). Windows drops that USB network link when the
+   board reboots, and on Oct 26 2026 it hung a PC restart (bugcheck 0x9F in usbrndis6). Since
+   2026-11-12 the board is on Ethernet instead, through a USB-Ethernet adapter on the PC, and
+   its USB cable is unplugged.
 
 ## Fix
 
@@ -36,49 +38,54 @@ Upstream runs the two board pieces from `run_server/name_server.ipynb` and
 
 ## Bring-up (one time)
 
-All `ssh`/`scp` commands run from the VQLM PC (PowerShell). Replace `192.168.3.1` if your
+All `ssh`/`scp` commands run from the VQLM PC (PowerShell). Replace `192.168.2.99` if your
 board has a different address. The board's default password is `xilinx`.
 
 1. Find the firmware path your `qick_daemon.ipynb` uses (its `qick_path = ...` line). Check it exists:
 
-       ssh xilinx@192.168.3.1 "ls /home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/"
+       ssh xilinx@192.168.2.99 "ls /home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/"
 
 2. Stop the notebooks: in the board's Jupyter page, *Running* tab, shut down the
    `name_server` and `qick_daemon` kernels.
 
 3. Copy the script and install the service (use your bitfile path):
 
-       scp src\qdlutils\hardware\qickdawg\board\qick_server.py xilinx@192.168.3.1:/home/xilinx/
-       ssh -t xilinx@192.168.3.1 "sudo python3 /home/xilinx/qick_server.py --install --host 192.168.3.1 --bitfile /home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/qick_4x2.bit"
+       scp src\qdlutils\hardware\qickdawg\board\qick_server.py xilinx@192.168.2.99:/home/xilinx/
+       ssh -t xilinx@192.168.2.99 "sudo python3 /home/xilinx/qick_server.py --install --host 192.168.2.99 --bitfile /home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/qick_4x2.bit"
 
    Watch it start (Ctrl+C to stop watching):
 
-       ssh -t xilinx@192.168.3.1 "sudo journalctl -u qick-server -f"
+       ssh -t xilinx@192.168.2.99 "sudo journalctl -u qick-server -f"
 
-4. If the board is on the USB cable: Device Manager > Network adapters > the
-   "USB Ethernet/RNDIS Gadget" (or similar) > Properties > Power Management > untick
-   "Allow the computer to turn off this device to save power". Also set
-   Power Options > USB selective suspend to Disabled.
+4. The PC reaches the board over a private Ethernet link: a USB-Ethernet adapter on the PC
+   (Realtek USB, fixed address 192.168.2.1/24, no gateway) cabled straight to the board's
+   Ethernet port. The board answers at 192.168.2.99, PYNQ's built-in fixed Ethernet address, so
+   nothing changes on the board. In admin PowerShell (use your adapter's name from `Get-NetAdapter`):
+
+       New-NetIPAddress -InterfaceAlias "Ethernet 3" -IPAddress 192.168.2.1 -PrefixLength 24
+
+   Keep the board's USB cable unplugged.
 
 5. Test from the PC:
 
-       python -m qdlutils.hardware.qickdawg.client --host 192.168.3.1
-       python -m qdlutils.hardware.qickdawg.client --host 192.168.3.1 --laser on
-       python -m qdlutils.hardware.qickdawg.client --host 192.168.3.1 --laser off
+       python -m qdlutils.hardware.qickdawg.client --host 192.168.2.99
+       python -m qdlutils.hardware.qickdawg.client --host 192.168.2.99 --laser on
+       python -m qdlutils.hardware.qickdawg.client --host 192.168.2.99 --laser off
 
-6. Reboot test: `ssh -t xilinx@192.168.3.1 "sudo reboot"`, wait about 2 minutes, and run
+6. Reboot test: `ssh -t xilinx@192.168.2.99 "sudo reboot"`, wait about 5 minutes (the board waits for DHCP, then
+   2 minutes more before loading QICK), and run
    step 5 again without touching any notebook.
 
 Undo at any time with
-`ssh -t xilinx@192.168.3.1 "sudo python3 /home/xilinx/qick_server/qick_server.py --uninstall"`,
+`ssh -t xilinx@192.168.2.99 "sudo python3 /home/xilinx/qick_server/qick_server.py --uninstall"`,
 then use the notebooks as before.
 
 ## If it still drops
 
-Run `python -m qdlutils.hardware.qickdawg.client --host 192.168.3.1` when it happens. The
+Run `python -m qdlutils.hardware.qickdawg.client --host 192.168.2.99` when it happens. The
 first failing step tells you where the problem is:
 
 * **1 fails (port closed):** the board is off, the link is down, or the service died. Run
-  `ping 192.168.3.1`, then `sudo journalctl -u qick-server -n 100` on the board.
+  `ping 192.168.2.99`, then `sudo journalctl -u qick-server -n 100` on the board.
 * **2 or 3 fails:** the service is up but QICK isn't answering. The journal shows why, and
   the watchdog will restart it within about 2 minutes.

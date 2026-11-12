@@ -23,7 +23,7 @@ What it does differently from the notebooks:
 
 Install on the board (once, over ssh, as the xilinx user):
 
-    sudo python3 qick_server.py --install --host 192.168.3.1 --bitfile /home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/qick_4x2.bit
+    sudo python3 qick_server.py --install --host 192.168.2.99 --bitfile /home/xilinx/jupyter_notebooks/qick-dawg/firmware/photon_counting/qick_4x2.bit
 
 Then:
 
@@ -34,7 +34,7 @@ Then:
 
 Run by hand (for testing, after stopping the service and the notebooks):
 
-    sudo -E /usr/local/share/pynq-venv/bin/python qick_server.py --host 192.168.3.1 --bitfile ...
+    sudo -E /usr/local/share/pynq-venv/bin/python qick_server.py --host 192.168.2.99 --bitfile ...
 """
 
 import argparse
@@ -55,7 +55,7 @@ SYSCTL_PATH = "/etc/sysctl.d/90-qick-server-keepalive.conf"
 INSTALL_DIR = "/home/xilinx/qick_server"
 PYNQ_PYTHON = "/usr/local/share/pynq-venv/bin/python"
 
-DEFAULT_HOST = "192.168.3.1"
+DEFAULT_HOST = "192.168.2.99"
 DEFAULT_PORT = 8888
 DEFAULT_NAME = "myqick"
 DEFAULT_BOARD = "RFSoC4x2"
