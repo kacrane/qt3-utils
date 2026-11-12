@@ -557,7 +557,7 @@ class MicroscopeWindow:
                 from qt3utils.applications.qt3microscope.panels.laser import LaserPanel
                 from qt3utils.hardware.qickdawg.client import QickDawgClient
                 q = hw["qickdawg"]
-                client = QickDawgClient(host=q.get("host", "192.168.3.1"), port=q.get("port", 8888),
+                client = QickDawgClient(host=q.get("host", "192.168.2.99"), port=q.get("port", 8888),
                                         server_name=q.get("server_name", "myqick"),
                                         timeout_s=q.get("timeout_s", 10),
                                         laser_settings=hw.get("laser"))
