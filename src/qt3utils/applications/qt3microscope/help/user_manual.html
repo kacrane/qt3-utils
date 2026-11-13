@@ -131,12 +131,22 @@
 <p><strong>Typical use.</strong> After finding a spot in an image scan, move to it (right-click &gt; Go to position), then press <strong>Optimize X</strong>, <strong>Optimize Y</strong> and <strong>Optimize Z</strong>. Repeat until the peaks stop moving.</p>
 <p><strong>Reading the plots.</strong></p>
 <ul>
-<li>The X, Y and Z plots sit side by side, and each Optimize click adds its scan to its own axis's plot.</li>
+<li>The X, Y and Z plots sit side by side, with the newest confocal image below them. The image is always at least as tall as the plots: when the window gets bigger, the image grows first, and once it is as wide as the plot area the plots get taller. Each Optimize click adds its scan to its own axis's plot.</li>
 <li>Successive scans cycle through colors. The newest scan has the heavy line, with a dashed vertical line where the piezo moved to; older scans are thinner and paler.</li>
 <li>All three plots share one intensity scale, so you can read across them to compare peak heights.</li>
 <li>The position axis widens to fit every scan so far.</li>
 <li>Each plot's title gives the other two piezo positions for its newest scan. Hover over a line to see that scan's number, time, the other two positions and where it moved the piezo.</li>
 <li>Right-click in a plot and choose <strong>Go to position</strong> to move that axis there.</li>
+</ul>
+<p><strong>Confocal image.</strong> The newest image scan is shown next to the plots so you can see how far optimizing has moved the position from where you started:</p>
+<ul>
+<li>The orange <strong>+</strong> is the last point you chose with right-click &gt; <strong>Go to position</strong> on an image (on the Image scan tab or here).</li>
+<li>The blue <strong>○</strong> is the current position, and the green line and dots are the path the position has taken since then.</li>
+<li>The left column shows how far X, Y and Z have moved from the go-to point.</li>
+<li><strong>Zoom on the go-to point</strong> (on by default) shows the area around it. Untick it to see the whole scan.</li>
+<li>If the position moves outside the view (or outside the scan), the view widens just enough to show the ○ beside the scan's edge. The area outside the scan is lavender gray so it can't be mistaken for data. The view stays square, so the pixels stay square.</li>
+<li>Until you take an image scan, there is no image and the X, Y and Z plots use the whole area.</li>
+<li>The image uses the same Minimum and Maximum as the Image scan tab. Its title gives the scan number and the Z it was taken at.</li>
 </ul>
 <p><strong>Reset plots</strong> clears all three plots. <strong>Save scan</strong> saves the scan picked in the <strong>Scan</strong> list, as PNG plus HDF5 or HDF5 only.</p>
 

@@ -46,7 +46,7 @@ QT3MICROSCOPE:
     camera: {driver: thorlabs_tsi, label: "Thorlabs CS165MU", serial: , dll_dir: ,
              exposure_ms: 10, gain_db: 0, display_fps: 30}
     # QICK-DAWG board that switches the laser (same values as qt3laser).
-    qickdawg: {host: 192.168.2.99, port: 8888, server_name: myqick, timeout_s: 10, health_check_s: 30}
+    qickdawg: {host: 192.168.3.1, port: 8888, server_name: myqick, timeout_s: 10, health_check_s: 30}
     laser: {laser_gate_pmod: 0, adc_channel: 0, edge_counting: true,
             high_threshold: 8000, low_threshold: 500, relax_delay_tns: 50}
     # Scope strip: SPCM on a DAQ counter (formerly qdlscope; same values

@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 DEFAULT_COLOR_MAP = "gray"  # black and white, as qdlscan
 FONT = 9  # plot text size, same as the scope
+PLOT_MIN_PT = 110  # XYZ Optimization: plot height kept while the image below grows
 
 
 def _qt3utils_version():
@@ -101,6 +102,12 @@ class ScanEngine:
         self.n_scans = {}  # numbered separately per kind: image scans, line scans
         self.last_save_directory = None
         self.closing = False
+        # The image scans (set by the Image scan tab) and the last "Go to
+        # position" clicked on one: the XYZ Optimization tab shows the newest
+        # scan with that point and how far the position has moved since.
+        self.image_scans = lambda: []
+        self.image_norm = lambda: (None, None)
+        self.goto = None  # {"x", "y", "z", "scan_id", "time"}
         # Called with the scan's start function: lets the window move the flip
         # mirrors to the photon counter first (File > Preferences).
         self.before_counting = lambda go: go()
@@ -378,6 +385,8 @@ class ImageScanTab(_PlotTab):
         # while you take zoom-ins) until you unpin it or pin another. Its
         # controls are on a second row under the first.
         self.pinned = None
+        engine.image_scans = lambda: self.scans
+        engine.image_norm = lambda: self.norm
         self.pin_btn = ttk.Button(self.top, text="Pin →", command=self.pin)
         self.pin_btn.pack(side="left", padx=(0, 4))
         row2 = ttk.Frame(self.top.master, padding=(4, 0, 4, 4))
@@ -930,9 +939,17 @@ class ImageScanTab(_PlotTab):
         if x is None or self.engine.busy:
             self.status.set(self.engine.busy or "Right-click inside the image.")
             return
-        self.engine.move([("x", float(x)), ("y", float(y))],
-                         lambda ok, res: (self.status.set(f"Moved to x {x:.2f}, y {y:.2f} µm" if ok else f"Move failed: {res}"),
-                                          self.redraw()))
+        scan = self.shown
+
+        def done(ok, res):
+            if ok:  # the XYZ Optimization tab measures drift from here
+                self.engine.goto = {"x": float(x), "y": float(y), "z": self.engine.position("z"),
+                                    "scan_id": scan["id"] if scan is not None else None,
+                                    "time": datetime.datetime.now()}
+            self.status.set(f"Moved to x {x:.2f}, y {y:.2f} µm" if ok else f"Move failed: {res}")
+            self.redraw()
+
+        self.engine.move([("x", float(x)), ("y", float(y))], done)
 
     def save(self, scan=None):
         scan = scan or self.shown
@@ -1038,14 +1055,62 @@ class LineScanTab(_PlotTab):
             self.opt_btns.append(b)
         ttk.Button(self.left, text="Reset plots", command=self.clear_plots).grid(
             row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self._heading(7, "Confocal image")
+        # The newest image scan, zoomed on the "Go to position" point, or the whole scan.
+        self.zoom_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self.left, text="Zoom on the go-to point", variable=self.zoom_var,
+                        command=self.redraw).grid(row=8, column=0, columnspan=2, sticky="w")
+        self.drift_var = tk.StringVar(value="")
+        ttk.Label(self.left, textvariable=self.drift_var, justify="left",
+                  wraplength=int(230 * scale)).grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 0))
         self.status = tk.StringVar(value="Scans around the current position, then moves to the fitted peak.")
         ttk.Label(self.left, textvariable=self.status, foreground=GRAY, justify="left",
-                  wraplength=int(230 * scale)).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
+                  wraplength=int(230 * scale)).grid(row=10, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        # Where the confocal image goes: "below" the X | Y | Z plots, or "left"
+        # in this settings column (profile scan: line: image_place).
+        self.image_place = str(self.cfg.get("image_place", "below")).lower()
+        self.fig2 = None
+        if self.image_place == "left" and self.fig is not None:
+            from matplotlib.figure import Figure
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            self.fig2 = Figure(figsize=(236 / 96, 222 / 96), dpi=96 * scale)
+            self.canvas2 = FigureCanvasTkAgg(self.fig2, master=self.left)
+            self.canvas2.get_tk_widget().configure(width=int(236 * scale), height=int(222 * scale))
+            self.canvas2.get_tk_widget().grid(row=11, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            self.canvas2.mpl_connect("button_press_event", self._on_click)
         self._lock_left_width()
+        self.trail = []  # (x, y) positions since the last go-to, drawn on the image
+        self._trail_goto = None
+        self._image_key = None
         self.redraw()
         if self.fig is not None:  # margins are in points: recompute when the tab resizes
             self.canvas.mpl_connect("resize_event", lambda e: self.redraw())
             self.canvas.mpl_connect("motion_notify_event", self._on_hover)
+        self._watch_position()
+
+    def _watch_position(self):
+        """Follow the piezos (optimizing, the stage and the image tab all move
+        them): add each new XY position to the trail and redraw the image when
+        the position, the go-to point or the newest scan changes."""
+        if self.engine.closing:
+            return
+        goto = self.engine.goto
+        if goto is not self._trail_goto:  # a new go-to starts a new trail
+            self._trail_goto = goto
+            self.trail = [(goto["x"], goto["y"])] if goto else []
+        x, y, z = (self.engine.position(a) for a in ("x", "y", "z"))
+        if x is not None and y is not None and (not self.trail or self.trail[-1] != (x, y)):
+            self.trail.append((x, y))
+            self.trail = self.trail[-200:]
+        scans = self.engine.image_scans()
+        newest = scans[-1] if scans else None
+        key = (x, y, z, id(goto), id(newest), newest is not None and newest.get("index"),
+               self.engine.image_norm())
+        if key != self._image_key:
+            self._image_key = key
+            if self.frame.winfo_ismapped():
+                self.redraw()
+        self.frame.after(500, self._watch_position)
 
     def _set_running(self, running):
         for b in self.opt_btns:
@@ -1121,7 +1186,8 @@ class LineScanTab(_PlotTab):
         self.redraw()
 
     def redraw(self):
-        """Three plots side by side, X | Y | Z. Every line scan of the session is
+        """Three plots, X, Y and Z, and the newest confocal image (see _layout
+        and _image_pane). Every line scan of the session is
         drawn on its axis's plot in turn through the color cycle; the newest one
         on each plot is drawn heavier, with a dashed line at the position it moved
         to. The title shows where the other two piezos were for the newest scan;
@@ -1134,20 +1200,35 @@ class LineScanTab(_PlotTab):
         pt = self.fig.dpi / 72.0
         w = self.fig.get_figwidth() * self.fig.dpi
         h = self.fig.get_figheight() * self.fig.dpi
-        left, gap, right, bottom, top = 56 * pt, 14 * pt, 10 * pt, 36 * pt, 18 * pt
-        pw = max(10.0, (w - left - right - 2 * gap) / 3)
-        ph = max(10.0, h - bottom - top)
+        rects, label_left = self._layout(w, h, pt)
+        has_scan = bool(self.engine.image_scans())
+        if not has_scan:
+            self.image_ax = None
+            self.drift_var.set("No confocal scan yet. The newest image scan appears here once you take one.")
+            if self.fig2 is not None:
+                self.canvas2.get_tk_widget().grid_remove()
+        elif self.fig2 is not None:
+            self.canvas2.get_tk_widget().grid()
+            self.fig2.clear()
+            fw = self.fig2.get_figwidth() * self.fig2.dpi
+            fh = self.fig2.get_figheight() * self.fig2.dpi
+            l, b, t = 46 * pt, 30 * pt, 16 * pt
+            side = max(10.0, min(fw - l - 6 * pt, fh - b - t))
+            self._image_pane(self.fig2, [l / fw, b / fh, side / fw, side / fh])
+            self.canvas2.draw_idle()
+        else:
+            self._image_pane(self.fig, rects["image"])
         self.axes_by_name = {}
         self._hover_lines = []  # (axes, Line2D, scan)
         self._hover_note = None
         colors = [c["color"] for c in __import__("matplotlib").rcParams["axes.prop_cycle"]]
         for k, name in enumerate(("x", "y", "z")):
-            ax = self.fig.add_axes([(left + k * (pw + gap)) / w, bottom / h, pw / w, ph / h])
+            ax = self.fig.add_axes(rects[name])
             self.axes_by_name[name] = ax
             ax.tick_params(labelsize=FONT)
             ax.grid(alpha=0.3)
             ax.set_xlabel(f"{name} position (µm)", fontsize=FONT)
-            if k == 0:
+            if name in label_left:
                 ax.set_ylabel("Intensity (cts/s)", fontsize=FONT)
             else:  # same intensity scale on all three: labels only on the left plot
                 ax.tick_params(labelleft=False)
@@ -1184,6 +1265,103 @@ class LineScanTab(_PlotTab):
             for ax in self.axes_by_name.values():
                 ax.set_ylim(lo, hi)
         self.canvas.draw_idle()
+
+    def _layout(self, w, h, pt):
+        """Where the X, Y and Z plots and the confocal image go, as figure
+        fractions. The three plots always sit side by side, X | Y | Z. With the
+        image "below" (the default), it is a square under them, centered; with it on the "left" (its own small figure) the plots take the
+        whole area. Returns the rectangles and the plots that carry intensity
+        labels."""
+        left, gap, right, bottom, top = 56 * pt, 22 * pt, 10 * pt, 36 * pt, 22 * pt
+        frac = lambda x, y, pw, ph: [x / w, y / h, max(pw, 1.0) / w, max(ph, 1.0) / h]
+        pw = (w - left - right - 2 * gap) / 3
+        if self.image_place == "left" or not self.engine.image_scans():  # no scan: no image
+            rects = {n: frac(left + k * (pw + gap), bottom, pw, h - bottom - top) for k, n in enumerate("xyz")}
+            return rects, ("x",)
+        # Kendall: the image is always at least as tall as the plots, and when
+        # the area grows the image grows first, until it is as wide as the
+        # whole plot area; only then do the plots get taller. Below that the
+        # plots keep PLOT_MIN_PT, or half the height when there is less room.
+        avail = max(20.0, h - 2 * bottom - 2 * top)
+        width = max(10.0, w - left - right)
+        ph = min(avail / 2, PLOT_MIN_PT * pt)
+        side = min(width, avail - ph)
+        ph = avail - side
+        rects = {n: frac(left + k * (pw + gap), h - top - ph, pw, ph) for k, n in enumerate("xyz")}
+        rects["image"] = frac(left + (width - side) / 2, bottom, side, side)
+        return rects, ("x",)
+
+    def _image_pane(self, fig, rect):
+        """The newest image scan with the go-to point (+), the path the
+        position has taken since (dots), and where it is now (circle)."""
+        from matplotlib.ticker import MaxNLocator
+        ax = fig.add_axes(rect)
+        self.image_ax = ax
+        ax.tick_params(labelsize=FONT)
+        ax.xaxis.set_major_locator(MaxNLocator(4))
+        ax.yaxis.set_major_locator(MaxNLocator(4))
+        ax.grid(alpha=0.3)
+        scans = self.engine.image_scans()
+        scan = scans[-1] if scans else None
+        goto = self.engine.goto
+        x, y, z = (self.engine.position(a) for a in ("x", "y", "z"))
+        ax.set_xlabel("x position (µm)", fontsize=FONT)
+        ax.set_ylabel("y position (µm)", fontsize=FONT)
+        from matplotlib.patches import Rectangle
+        extent = ImageScanTab._extent(scan)
+        # Outside the scan is lavender gray (not white or gray, so it can't be mistaken
+        # for data); rows not scanned yet are gray.
+        ax.set_facecolor(C.plot_outside)
+        ax.add_patch(Rectangle((extent[0], extent[2]), extent[1] - extent[0], extent[3] - extent[2],
+                               facecolor=C.plot_unscanned, edgecolor="none", zorder=0))
+        img = ax.imshow(scan["data_z"], extent=extent, cmap=DEFAULT_COLOR_MAP, origin="lower",
+                        aspect="equal", interpolation="none")
+        norm = self.engine.image_norm()
+        if norm[0] is not None:
+            from matplotlib.colors import Normalize
+            img.set_norm(Normalize(vmin=norm[0], vmax=norm[1]))
+        if len(self.trail) > 1:
+            tx, ty = zip(*self.trail)
+            ax.plot(tx, ty, "-", color=C.go, linewidth=1, alpha=0.8, zorder=4)
+            ax.plot(tx[1:-1], ty[1:-1], "o", markersize=3, color=C.go, zorder=4)
+        if goto is not None:
+            ax.plot(goto["x"], goto["y"], "+", markersize=12, markeredgewidth=2, color=C.pin, zorder=5)
+        if x is not None and y is not None:
+            ax.plot(x, y, "o", fillstyle="none", markersize=9, markeredgecolor=C.accent,
+                    markeredgewidth=2, zorder=6)
+        x0, x1, y0, y1 = extent
+        if self.zoom_var.get() and (goto is not None or x is not None):
+            cx, cy = (goto["x"], goto["y"]) if goto is not None else (x, y)
+            try:
+                rng = float(self.range_xy_e.get())
+            except ValueError:
+                rng = 3.0
+            half = max(2.0, 1.5 * rng)
+            x0, x1, y0, y1 = cx - half, cx + half, cy - half, cy + half
+        else:  # whole scan: a thin frame shows its edge if the view grows past it
+            ax.add_patch(Rectangle((extent[0], extent[2]), extent[1] - extent[0], extent[3] - extent[2],
+                                   fill=False, edgecolor=C.faint, linewidth=1, zorder=3))
+        # If the position (or the go-to point) is outside the view, widen the
+        # view just enough to show it beside the frame. The view stays square,
+        # so the pixels stay square.
+        pts = [(px, py) for px, py in ([(x, y)] if x is not None and y is not None else [])
+               + ([(goto["x"], goto["y"])] if goto is not None else [])]
+        margin = 0.06 * max(x1 - x0, y1 - y0)
+        for px, py in pts:
+            x0, x1 = min(x0, px - margin), max(x1, px + margin)
+            y0, y1 = min(y0, py - margin), max(y1, py + margin)
+        cx, cy, half = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, y1 - y0) / 2
+        ax.set_xlim(cx - half, cx + half)
+        ax.set_ylim(cy - half, cy + half)
+        ax.set_title(f"image {scan['id']} · z {scan['start_position_vector'][2]:.1f} µm", fontsize=FONT, pad=3)
+        fmt = lambda v: "—" if v is None else f"{v:+.2f}"
+        if goto is not None and x is not None and y is not None:
+            dz = None if (z is None or goto["z"] is None) else z - goto["z"]
+            self.drift_var.set(f"Moved from the go-to point by\nx {fmt(x - goto['x'])}, y {fmt(y - goto['y'])}, "
+                               f"z {fmt(dz)} µm\nOrange + is the go-to point, blue ○ is now, green is the path.")
+        else:
+            self.drift_var.set("Right-click the image scan and choose Go to position to mark a starting point."
+                               "\nBlue ○ is now, green is the path.")
 
     def _on_hover(self, event):
         """Show scan number and the other two piezo positions for the line under the mouse."""
@@ -1241,6 +1419,8 @@ class LineScanTab(_PlotTab):
         self.redraw()
 
     def _go_to(self):
+        if getattr(self, "_rclick_ax", None) is getattr(self, "image_ax", False):
+            return self._go_to_xy(*self._rclick_xy)
         x = self._rclick_xy[0]
         name = next((n for n, a in getattr(self, "axes_by_name", {}).items()
                      if a is getattr(self, "_rclick_ax", None)), None)
@@ -1256,6 +1436,23 @@ class LineScanTab(_PlotTab):
             self.redraw()
 
         self.engine.move([(name, float(x))], done)
+
+    def _go_to_xy(self, x, y):
+        """Right-click > Go to position on the confocal image: same as on the Image scan tab."""
+        if x is None or self.engine.busy:
+            self.status.set(self.engine.busy or "Right-click inside the image.")
+            return
+        scans = self.engine.image_scans()
+
+        def done(ok, res):
+            if ok:
+                self.engine.goto = {"x": float(x), "y": float(y), "z": self.engine.position("z"),
+                                    "scan_id": scans[-1]["id"] if scans else None,
+                                    "time": datetime.datetime.now()}
+            self.status.set(f"Moved to x {x:.2f}, y {y:.2f} µm" if ok else f"Move failed: {res}")
+            self.redraw()
+
+        self.engine.move([("x", float(x)), ("y", float(y))], done)
 
     def save(self):
         if self.shown is None:

@@ -38,6 +38,7 @@ LIGHT = dict(
     log_bg="#fbfbfb",
     plot_bg="#ffffff", plot_text="#000000", plot_grid="#b0b0b0", plot_line="#000000",
     plot_unscanned="#e6e6e6",
+    plot_outside="#c8bfd4",  # lavender gray: around a grayscale image, where green/blue marks show
 )
 
 DARK = dict(
@@ -62,6 +63,7 @@ DARK = dict(
     log_bg="#1a1a1a",
     plot_bg="#1f1f1f", plot_text="#dddddd", plot_grid="#4a4a4a", plot_line="#e6e6e6",
     plot_unscanned="#3a3a3a",
+    plot_outside="#3e3850",
 )
 
 C = SimpleNamespace(**LIGHT)
@@ -70,6 +72,7 @@ C = SimpleNamespace(**LIGHT)
 def apply(root, dark=False):
     """Set the theme for everything built after this call (call before building)."""
     C.__dict__.update(DARK if dark else LIGHT)
+    C.dark = bool(dark)
     # Keep widgets.py's module colors (imported by older code) in step.
     from qt3utils.applications.qt3microscope import widgets
     widgets.GREEN, widgets.ORANGE, widgets.RED = C.green, C.orange, C.red
@@ -171,7 +174,7 @@ def save_figure(fig, path, **kwargs):
                 return
 
     text = [(C.plot_text, "black"), (C.text, "black"), (C.faint, LIGHT["faint"])]
-    face = [(C.plot_bg, "white"), (C.plot_unscanned, LIGHT["plot_unscanned"]), (C.panel, "white")]
+    face = [(C.plot_bg, "white"), (C.plot_unscanned, LIGHT["plot_unscanned"]), (C.plot_outside, LIGHT["plot_outside"]), (C.panel, "white")]
     swap(fig.patch, "get_facecolor", "set_facecolor", face)
     for ax in fig.axes:
         swap(ax.patch, "get_facecolor", "set_facecolor", face)

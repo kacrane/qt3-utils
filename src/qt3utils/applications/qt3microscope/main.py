@@ -318,8 +318,26 @@ class MicroscopeWindow:
             ttk.Label(sec.body, text=note, foreground=C.muted, wraplength=self.px(330),
                       justify="left").pack(anchor="w")
             self.sections[item["key"]] = sec
+        self.logo = self._make_logo(scroll.inner)
         self._repack_drawer()
         return outer
+
+    def _make_logo(self, parent):
+        """QT3 / UW logo under the drawer sections (black and purple #32006e;
+        white and #e8e3d3 in dark mode). It sits right after the last section, so
+        opening sections pushes it down out of view."""
+        path = os.path.join(APP_DIR, "images", "qt3_uw_logo_dark.png" if getattr(C, "dark", False)
+                            else "qt3_uw_logo_light.png")
+        try:
+            from PIL import Image, ImageTk
+            img = Image.open(path)
+            width = self.px(230)
+            img = img.resize((width, round(img.height * width / img.width)), Image.LANCZOS)
+            self._logo_image = ImageTk.PhotoImage(img)
+        except Exception as e:
+            logger.info("No logo: %s", e)
+            return None
+        return ttk.Label(parent, image=self._logo_image)
 
     def _repack_drawer(self):
         """Show the drawer sections that are switched on, in profile order."""
@@ -335,6 +353,9 @@ class MicroscopeWindow:
                 self.popped[key].pack(fill="x", padx=6, pady=3)
             else:
                 self.sections[key].pack(fill="x", padx=6, pady=3)
+        if getattr(self, "logo", None) is not None:  # always after the last section
+            self.logo.pack_forget()
+            self.logo.pack(pady=(self.px(18), self.px(12)))
 
     def _set_all(self, value):
         for key, sec in self.sections.items():
@@ -557,7 +578,7 @@ class MicroscopeWindow:
                 from qt3utils.applications.qt3microscope.panels.laser import LaserPanel
                 from qt3utils.hardware.qickdawg.client import QickDawgClient
                 q = hw["qickdawg"]
-                client = QickDawgClient(host=q.get("host", "192.168.2.99"), port=q.get("port", 8888),
+                client = QickDawgClient(host=q.get("host", "192.168.3.1"), port=q.get("port", 8888),
                                         server_name=q.get("server_name", "myqick"),
                                         timeout_s=q.get("timeout_s", 10),
                                         laser_settings=hw.get("laser"))
