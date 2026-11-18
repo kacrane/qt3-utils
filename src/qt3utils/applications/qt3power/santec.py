@@ -16,7 +16,6 @@ _FALLBACK_LASER_CONFIG = [
     {"ip": "192.168.0.96", "switch_port": 1, "socket_port": 5000},
     {"ip": "192.168.0.99", "switch_port": 2, "socket_port": 5000},
     {"ip": "192.168.0.98", "switch_port": 3, "socket_port": 5000},
-    {"ip": "192.168.0.98", "switch_port": 3, "socket_port": 5000},
 ]
 TIMEOUT_MS = 2000
 
