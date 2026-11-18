@@ -30,7 +30,7 @@ SWITCH_PORT = 5020
 LASER_CONFIG = [
     {'name': 'TSL-1', 'ip': '192.168.0.96', 'switch_port': 1, 'socket_port': 5000},
     {'name': 'TSL-2', 'ip': '192.168.0.99', 'switch_port': 2, 'socket_port': 5000},
-    {'name': 'TSL-3', 'ip': '192.168.0.97', 'switch_port': 3, 'socket_port': 5000},
+    {'name': 'TSL-3', 'ip': '192.168.0.98', 'switch_port': 3, 'socket_port': 5000},
 ]
 
 # Laser list font colors
