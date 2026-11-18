@@ -354,11 +354,48 @@ class SantecController:
                 raise Exception("No lasers connected successfully.")
 
             self.is_connected = True
-            return f"Connected: Switch + {len(self.lasers)} Lasers"
+
+            # 3. Show whichever laser the switch is already routed to
+            msg = f"Connected: Switch + {len(self.lasers)} Lasers"
+            try:
+                port = self.read_switch_port()
+                self.active_laser = next((l for l in self.lasers if l['port'] == port), None)
+                msg += f" (switch on port {port})"
+            except Exception as e:
+                print(f"Could not read the optical switch port: {e}")
+            return msg
 
         except Exception as e:
             self.is_connected = False
             raise e
+
+    def read_switch_port(self):
+        """Port the OSU-110 is routed to now (:ROUT?, answers e.g. "+2")."""
+        reply = self.switch.query(":ROUT?").strip()
+        try:
+            return int(float(reply.lstrip('+')))
+        except ValueError:
+            raise RuntimeError(f"Optical switch gave an unexpected answer to :ROUT?: {reply!r}")
+
+    def route_switch(self, laser):
+        """Route the OSU-110 to this laser's port and check it got there.
+
+        The OSU-110 manual's command is ":ROUT <n>" (the old "CH <n>" was ignored).
+        The laser only becomes the active one (yellow/green in the laser list)
+        after the switch reports the new port.
+        """
+        if self.switch is None:
+            raise RuntimeError("Optical switch not connected.")
+        port = laser['port']
+        self.switch.write(f":ROUT {port}")
+        time.sleep(0.2)
+        actual = self.read_switch_port()
+        if actual != port:
+            raise RuntimeError(
+                f"Optical switch did not move to port {port} for {laser['name']} "
+                f"(it reports port {actual})."
+            )
+        self.active_laser = laser
 
     @staticmethod
     def _write_output(laser, on):
@@ -404,9 +441,7 @@ class SantecController:
 
         if self.active_laser != chosen:
             if self.active_laser: self._write_output(self.active_laser, False)
-            self.switch.write(f"CH {chosen['port']}")
-            time.sleep(0.2) 
-            self.active_laser = chosen
+            self.route_switch(chosen)
 
         inst = chosen['obj']
         inst.write(f":WAV {target_nm}")
@@ -436,10 +471,7 @@ class SantecController:
             # If no active laser, use first available laser
             inst = self.lasers[0]['obj']
             # Switch to this laser
-            if self.switch:
-                self.switch.write(f"CH {self.lasers[0]['port']}")
-                time.sleep(0.2)
-            self.active_laser = self.lasers[0]
+            self.route_switch(self.lasers[0])
         
         # Set power using Legacy mode command :POW
         inst.write(f":POW {power_value}")
@@ -452,10 +484,7 @@ class SantecController:
         if not self.lasers:
             raise RuntimeError("No lasers connected.")
         if not self.active_laser:
-            if self.switch:
-                self.switch.write(f"CH {self.lasers[0]['port']}")
-                time.sleep(0.2)
-            self.active_laser = self.lasers[0]
+            self.route_switch(self.lasers[0])
         return self.active_laser
 
     def get_output(self):
@@ -501,9 +530,7 @@ class SantecController:
         # Switch to this laser if not already active
         if self.active_laser != laser:
             if self.active_laser: self._write_output(self.active_laser, False)
-            self.switch.write(f"CH {laser['port']}")
-            time.sleep(0.2)
-            self.active_laser = laser
+            self.route_switch(laser)
         
         # Configure sweep parameters
         inst.write(f":WAV:SWE:STARt {start_nm}")
