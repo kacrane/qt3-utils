@@ -201,6 +201,10 @@ class NITCamera(Camera):
         global _manager
         nit = _load_sdk(self.sdk_dir)
         _hidden_console()
+        # That PowerShell also loads the user's profile (conda setup, ~2 s on
+        # the TQLM) while QT3 Microscope's window is frozen. The TQLM profile
+        # starts with: if ($env:QT3_SKIP_PS_PROFILE) { return }
+        os.environ["QT3_SKIP_PS_PROFILE"] = "1"
         _manager = nit.NITManager.getInstance()
         try:
             dev = (_manager.openBySerialNumber(self.serial) if self.serial
