@@ -53,6 +53,17 @@ class Camera:
     def set_gain_db(self, db):
         pass
 
+    # sensor mode (e.g. the NIT camera's response and gain), shown as a dropdown
+    def mode_names(self):
+        """List of mode names for the tab's Mode dropdown, or None if the camera has none."""
+        return None
+
+    def get_mode(self):
+        return None
+
+    def set_mode(self, name):
+        pass
+
     # acquisition
     def start(self):
         """Start continuous acquisition."""

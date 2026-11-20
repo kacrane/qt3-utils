@@ -146,6 +146,7 @@ class CameraStream:
         self.events.put(("opened", {"info": c.info(), "exposure": c.get_exposure_ms(),
                                     "exposure_range": c.exposure_range_ms(),
                                     "gain": c.get_gain_db(), "gain_range": c.gain_range_db(),
+                                    "modes": c.mode_names(), "mode": c.get_mode(),
                                     "bit_depth": getattr(c, "bit_depth", 16)}))
 
     def _do(self, cmd, *args):
@@ -171,6 +172,12 @@ class CameraStream:
                 else:
                     self.camera.set_gain_db(args[0])
                     self.events.put(("gain", self.camera.get_gain_db()))
+            elif cmd == "mode":
+                self.cfg["mode"] = args[0]
+                if self.camera is not None:
+                    self.camera.set_mode(args[0])
+                    self._report_settings()
+                    self.events.put(("mode", self.camera.get_mode()))
             elif cmd in ("close", "release"):
                 self.playing = False
                 if self.camera is not None:
@@ -200,6 +207,8 @@ class CameraTab:
             self.cfg["exposure_ms"] = st["exposure_ms"]
         if "gain_db" in st:
             self.cfg["gain_db"] = st["gain_db"]
+        if st.get("mode"):
+            self.cfg["mode"] = st["mode"]
         self.stream = CameraStream(self.cfg)
         if hub is not None:
             hub.on_close(self.close)
@@ -297,7 +306,8 @@ class CameraTab:
         self.exp_slider = ttk.Scale(g, orient="horizontal", from_=0.0, to=1.0,
                                     command=lambda v: self._slid("exposure", float(v)))
         self.exp_slider.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-        ttk.Label(g, text="Gain (dB)").grid(row=2, column=0, sticky="w")
+        self.gain_label = ttk.Label(g, text="Gain (dB)")
+        self.gain_label.grid(row=2, column=0, sticky="w")
         self.gain_entry = ttk.Entry(g, textvariable=self.v_gain, width=9)
         self.gain_entry.grid(row=2, column=1, sticky="e", padx=4, pady=2)
         self.gain_slider = ttk.Scale(g, orient="horizontal", from_=0.0, to=1.0,
@@ -315,7 +325,19 @@ class CameraTab:
         self._put("exposure", float(self.cfg.get("exposure_ms", 10.0)))
         self._sync_sliders()
         self.range_lbl = ttk.Label(g, text="", foreground=C.muted, wraplength=self.px(210), justify="left")
-        self.range_lbl.grid(row=4, column=0, columnspan=2, sticky="w")
+        self.range_lbl.grid(row=5, column=0, columnspan=2, sticky="w")
+        if self.cfg.get("driver") == "nit":
+            self._show_gain(False)  # NIT gain is in the Mode dropdown, not in dB
+        # Sensor mode (NIT camera: response and gain). Shown once the camera
+        # reports modes; the choice is remembered and applied at the next open.
+        self.v_mode = tk.StringVar(value=self.cfg.get("mode") or "")
+        self.mode_label = ttk.Label(g, text="Mode")
+        self.mode_box = ttk.Combobox(g, textvariable=self.v_mode, state="readonly", width=20)
+        self.mode_box.bind("<<ComboboxSelected>>", self._mode_chosen)
+        ToolTip(self.mode_box, "Sensor response and gain. Log: high dynamic range, exposure 0.1-12 ms. "
+                               "Lin: signal proportional to light, exposure 10 µs-220 ms; high gain is "
+                               "more sensitive, CDS lowers noise at high gain.",
+                wraplength=self.px(320))
         self._autoexp_changed(save=False)
 
         c = ttk.LabelFrame(left, text="Contrast", padding=6)
@@ -592,6 +614,20 @@ class CameraTab:
             self.stream.send(what, value)
             self._save_state()
 
+    def _show_gain(self, show):
+        for w in (self.gain_label, self.gain_entry, self.gain_slider):
+            if show:
+                w.grid()
+            else:
+                w.grid_remove()
+
+    def _mode_chosen(self, _event=None):
+        name = self.v_mode.get()
+        self.mode_box.selection_clear()
+        self.v_msg.set(f"Switching to {name}…")
+        self.stream.send("mode", name)
+        self._save_state()
+
     def set_exposure(self):
         self._typed("exposure")
 
@@ -643,12 +679,23 @@ class CameraTab:
                         self.v_gain.set(self._fmt("gain", val["gain"]))
                         self.gain_entry.config(state="normal")
                         self.gain_slider.state(["!disabled"])
+                        self._show_gain(True)
                     else:
-                        text += "\nNo gain setting"
+                        # No gain in dB (the NIT camera's gain is in the Mode dropdown).
                         self.v_gain.set("—")
                         self.gain_entry.config(state="disabled")
                         self.gain_slider.state(["disabled"])
+                        self._show_gain(False)
                     self.range_lbl.config(text=text)
+                    modes = val.get("modes")
+                    if modes:
+                        self.mode_box.config(values=modes)
+                        self.v_mode.set(val.get("mode") or "")
+                        self.mode_label.grid(row=4, column=0, sticky="w")
+                        self.mode_box.grid(row=4, column=1, sticky="e", padx=4, pady=2)
+                    else:
+                        self.mode_label.grid_remove()
+                        self.mode_box.grid_remove()
                     self._sync_sliders()
                     if not self.v_auto.get() and self.v_hi.get() == "4095" and self.bit_depth != 12:
                         self.v_hi.set(str(self.full_scale))
@@ -675,6 +722,10 @@ class CameraTab:
                         self.v_gain.set(self._fmt("gain", val) if val is not None else "—")
                         self._sync_sliders()
                     self.v_msg.set(f"Gain {self._fmt('gain', val)} dB." if val is not None else "Gain set.")
+                elif kind == "mode":
+                    self.v_mode.set(val or "")
+                    self.v_msg.set(f"Mode: {val}.")
+                    self._save_state()
                 elif kind == "released":
                     self.playing = False
                     self.info = {}
@@ -1051,6 +1102,7 @@ class CameraTab:
                 "setup": self.setup, "camera": self.info, "frame": f.index,
                 "exposure_ms": self._get("exposure"),
                 "gain_db": self._float(self.v_gain.get()),
+                "mode": self.v_mode.get() or None,
                 "bit_depth": self.bit_depth,
                 "piezo_um": self._stage_positions(),
                 "crosshair_px": list(self.mark) if self.mark else None,
@@ -1111,7 +1163,8 @@ class CameraTab:
              "crosshair": self.v_cross.get(), "show_saturated": self.v_sat.get(),
              "reticle": self.v_reticle.get(), "reticle_px": self._float(self.v_reticle_px.get()),
              "mark": list(self.mark) if self.mark else None,
-             "user_save_dir": self.user_dir, "auto_exposure": self.v_autoexp.get()}
+             "user_save_dir": self.user_dir, "auto_exposure": self.v_autoexp.get(),
+             "mode": self.v_mode.get() or None}
         d = {k: v for k, v in d.items() if v is not None}
         try:
             os.makedirs(STATE_DIR, exist_ok=True)

@@ -63,6 +63,16 @@ NITVISION_GUESSES = [
 # power it can damage the PC (NIT manual). Refused unless allow_strong_tec.
 STRONG_TEC = "strong current"
 
+# The Camera tab's Mode dropdown: name -> camera parameters, set in this order
+# (changing 'Sensor Response' resets 'Analog Gain' and 'Cds', so it goes first).
+# Exposure ranges differ: Log 0.1-12 ms, Lin 10 us-220 ms.
+MODES = {
+    "Log (high dynamic range)": [("Sensor Response", "Log")],
+    "Lin, low gain": [("Sensor Response", "Lin"), ("Analog Gain", "Low")],
+    "Lin, high gain": [("Sensor Response", "Lin"), ("Analog Gain", "High"), ("Cds", "Off")],
+    "Lin, high gain + CDS": [("Sensor Response", "Lin"), ("Analog Gain", "High"), ("Cds", "On")],
+}
+
 _nit = None        # the imported NITLibrary module (one per program)
 _manager = None    # NITManager singleton
 _console_done = False
@@ -178,7 +188,7 @@ class NITCamera(Camera):
     bit_depth = 14
 
     def __init__(self, sdk_dir=None, dll_dir=None, nuc_dir=None, serial=None, params=None,
-                 max_fps=True, exposure_ms=10.0, allow_strong_tec=False, **_ignored):
+                 max_fps=True, exposure_ms=10.0, allow_strong_tec=False, mode=None, **_ignored):
         self.sdk_dir = sdk_dir or dll_dir
         self.nuc_dir = nuc_dir
         self.serial = str(serial) if serial else None
@@ -186,6 +196,7 @@ class NITCamera(Camera):
         self.max_fps = bool(max_fps)
         self.allow_strong_tec = bool(allow_strong_tec)
         self._start_exposure = exposure_ms
+        self._start_mode = mode
         self.dev = None
         self.nuc_status = ""
         self._observers = ()
@@ -230,6 +241,11 @@ class NITCamera(Camera):
             logger.info("NIT set %s = %r", name, value)
             dev.setParamValueOf(name, value)
             dev.updateConfig()
+        if self._start_mode:
+            try:
+                self._apply_mode(self._start_mode)
+            except Exception as e:
+                logger.warning("NIT mode %r not set: %s", self._start_mode, e)
         self.set_exposure_ms(self._start_exposure)
         dev << frames
         logger.info("NIT camera open: %s", self.info())
@@ -324,6 +340,53 @@ class NITCamera(Camera):
         if self.max_fps:
             dev.setFps(dev.maxFps())
             dev.updateConfig()
+
+    # ----- mode (sensor response, analog gain, CDS) -----
+    def mode_names(self):
+        return list(MODES)
+
+    def get_mode(self):
+        dev = self.dev
+        try:
+            resp = dev.paramStrValueOf("Sensor Response")
+            gain = dev.paramStrValueOf("Analog Gain")
+            try:
+                cds = dev.paramStrValueOf("Cds")
+            except Exception:
+                cds = "Off"
+        except Exception:
+            return None
+        for name, steps in MODES.items():
+            want = dict(steps)
+            if want.get("Sensor Response", "").lower() != str(resp).lower():
+                continue
+            if "Analog Gain" in want and want["Analog Gain"].lower() != str(gain).lower():
+                continue
+            if "Cds" in want and want["Cds"].lower() != str(cds).lower():
+                continue
+            return name
+        return f"{resp}, {gain} gain" + (", CDS" if str(cds).lower() == "on" else "")
+
+    def _apply_mode(self, name):
+        if name not in MODES:
+            raise ValueError(f"unknown mode {name!r} (use one of {', '.join(MODES)})")
+        for param, value in MODES[name]:
+            logger.info("NIT set %s = %r", param, value)
+            self.dev.setParamValueOf(param, value)
+            self.dev.updateConfig()
+
+    def set_mode(self, name):
+        """Switch mode, keeping the exposure if the new mode allows it."""
+        was_running = self._running
+        exposure = self.get_exposure_ms()
+        if was_running:
+            self.stop()
+        try:
+            self._apply_mode(name)
+        finally:
+            self.set_exposure_ms(exposure)  # clamped to the new mode's range
+            if was_running:
+                self.start()
 
     # ----- acquisition -----
     def start(self):
