@@ -35,10 +35,12 @@ other cameras.
 """
 
 import collections
+import ctypes
 import glob
 import importlib
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -63,6 +65,43 @@ STRONG_TEC = "strong current"
 
 _nit = None        # the imported NITLibrary module (one per program)
 _manager = None    # NITManager singleton
+_console_done = False
+
+
+def _hidden_console():
+    """
+    Give the program a console with no window, once.
+
+    When the Cypress USB driver is 1.2.3.14 or older, NITLibrary runs
+    'powershell.exe -Command Get-ItemProperty ... ProductName' while opening
+    the camera, to pick which newer driver to recommend. QT3 Microscope's
+    shortcut uses pythonw.exe, which has no console, so Windows opens a
+    terminal window for that PowerShell. Attaching to a windowless console
+    first makes it run out of sight. (Updating the driver skips the check.)
+    """
+    global _console_done
+    if _console_done or sys.platform != "win32":
+        return
+    _console_done = True
+    k32 = ctypes.windll.kernel32
+    if k32.GetConsoleWindow():
+        return  # started from a terminal: the check already runs in it, no new window
+    try:
+        helper = subprocess.Popen(["cmd.exe", "/q", "/k"], stdin=subprocess.PIPE,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+    except OSError as e:
+        logger.debug("no hidden console: %r", e)
+        return
+    try:
+        for _ in range(100):
+            if k32.AttachConsole(helper.pid):
+                logger.debug("attached to a hidden console")
+                return
+            time.sleep(0.02)
+        logger.debug("could not attach to the hidden console")
+    finally:
+        helper.kill()  # the console stays while we are attached to it
 
 
 def _py_tag():
@@ -161,6 +200,7 @@ class NITCamera(Camera):
     def open(self):
         global _manager
         nit = _load_sdk(self.sdk_dir)
+        _hidden_console()
         _manager = nit.NITManager.getInstance()
         try:
             dev = (_manager.openBySerialNumber(self.serial) if self.serial
