@@ -209,6 +209,7 @@ class CameraTab:
         self.info = {}
         self.playing = False
         self.want_play = False       # remembered when the tab is hidden
+        self._opening_since = None   # time Play was pressed while the camera opens
         self.visible = True
         self.shown_index = None
         self.frozen = None           # frame shown (newest or paused)
@@ -412,6 +413,9 @@ class CameraTab:
         else:
             self.want_play = True
             self.v_msg.set("Opening the camera…" if not self.info else "Starting…")
+            if not self.info:
+                self._opening_since = time.time()
+                self.set_status("connecting", ORANGE)
             self.play_btn.config(state="disabled")
             self.stream.send("play")
 
@@ -620,6 +624,8 @@ class CameraTab:
         try:
             while True:
                 kind, val = self.stream.events.get_nowait()
+                if kind in ("opened", "error", "released"):
+                    self._done_connecting()
                 if kind == "opened":
                     self.info = val["info"]
                     self.bit_depth = int(val.get("bit_depth") or 16)
@@ -697,6 +703,8 @@ class CameraTab:
             if self._dirty and self.visible and self.frozen is not None:
                 self._dirty = False
                 self._draw()
+            if self._opening_since is not None and self.visible:
+                self._draw_connecting()
             if self.playing:
                 self._readout()
         except Exception:
@@ -708,6 +716,32 @@ class CameraTab:
         self._dirty = True
         if self.frozen is None:
             self._draw_empty()
+
+    def _draw_connecting(self):
+        """While the camera opens (the NIT camera takes several seconds the
+        first time), say so in the middle of the view, with a running timer."""
+        cv = self.canvas
+        cv.delete("connecting")
+        secs = time.time() - self._opening_since
+        dots = ("." * (1 + int(secs * 2) % 3)).ljust(3)  # fixed width, so the line doesn't jump
+        name = self.cfg.get("label") or "camera"
+        lines = [f"Connecting to the {name}{dots}", f"{secs:.0f} s",
+                 "The first connection can take several seconds."]
+        x, y = cv.winfo_width() // 2, cv.winfo_height() // 2
+        t = cv.create_text(x, y, text="\n".join(lines), justify="center", fill="#e8e8e8",
+                           font=("TkDefaultFont", self.px(11)), tags="connecting")
+        x0, y0, x1, y1 = cv.bbox(t)
+        pad = self.px(14)
+        r = cv.create_rectangle(x0 - pad, y0 - pad, x1 + pad, y1 + pad, fill="#2b2b2b",
+                                outline="#5a5a5a", tags="connecting")
+        cv.tag_lower(r, t)
+
+    def _done_connecting(self):
+        if self._opening_since is not None:
+            self._opening_since = None
+            self.canvas.delete("connecting")
+            if self.frozen is None:
+                self._draw_empty()
 
     def _draw_empty(self):
         cv = self.canvas
