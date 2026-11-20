@@ -106,7 +106,7 @@ QT3MICROSCOPE:
         - {label: "Camera", targets: {M6: up, M8: down}}
         - {label: "SNSPD", targets: {M6: down, M7: up, M8: down}}
         - {label: "Photodiode", targets: {M6: down, M7: down, M5: up}}
-        - {label: "Spectrometer", targets: {M5: down, M6: down, M7: down}}
+        - {label: "Spectrometer", targets: {M5: down, M6: down, M7: down, M8: down}}
     # XY micrometers (MCL MicroDrive, formerly qt3move's microstage), always
     # on screen beside the scope. Positions in µm from the homed corner.
     # The stage has no encoders: the last position, whether it was homed and
